@@ -1,0 +1,8 @@
+# El repo se edita en Windows y corre en Linux (pipeline y servidores de los
+# clientes). Todo lo que es texto se guarda con LF: un Makefile o un .env con
+# CRLF falla del otro lado.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.pdf binary
