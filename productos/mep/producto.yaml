@@ -1,0 +1,33 @@
+# Definición del producto. Embarcar un producto nuevo es agregar una carpeta como
+# esta: no se toca código del toolchain.
+#
+# PENDIENTE: el inventario de servicios de abajo es el punto de partida, no el dato
+# confirmado. Sale de relevar los docker-compose.yml reales de los 16 clientes de
+# MEP (pendiente 1 del documento de arquitectura). Ajustar antes del primer release
+# real.
+
+codigo: mep
+nombre: MEP
+descripcion: Módulo Electrónico de Pagos
+
+# Repo base en el registry privado. Cada servicio cuelga de acá.
+registry: registry.accusys.com.ar/mep
+
+# Plantilla de compose, relativa a esta carpeta.
+plantilla: compose.plantilla.yaml
+
+# Servicios que Accusys publica como imagen. Los de terceros (base de datos,
+# proxies) van en la plantilla pero no acá: no los versionamos nosotros.
+servicios:
+  api:
+    descripcion: API de MEP y conector
+    healthcheck:
+      url: http://api:8080/health
+      espera: 200
+      timeout_s: 120
+  web:
+    descripcion: Front de operación
+    healthcheck:
+      url: http://web:8080/healthz
+      espera: 200
+      timeout_s: 60

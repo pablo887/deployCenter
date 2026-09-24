@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Nunca versionar entornos de clientes reales: los valores viven en el servidor
+# del cliente y no salen de ahí. El único .env que se versiona es el de ejemplo.
+.env
+*.env
+!ejemplos/**/.env.ejemplo
+
+# Compose generado: es un artefacto, se regenera desde la plantilla
+docker-compose.generado.yml
+
+# Claves de firma. La privada no entra acá ni por accidente.
+*.key
+cosign.key
+*.pem

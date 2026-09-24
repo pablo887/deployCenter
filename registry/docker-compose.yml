@@ -1,0 +1,27 @@
+# Registry local, SOLO para desarrollo del toolchain.
+#
+# Sin TLS y sin autenticación: sirve para probar que 'dc pinear' resuelve
+# digests contra un registry real. No representa el registry de producción en
+# lo que importa, que son los permisos por cliente.
+
+name: deploycenter-registry-dev
+
+services:
+  registry:
+    image: registry:2.8.3
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    volumes:
+      - datos:/var/lib/registry
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/v2/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  datos:
+    name: deploycenter-registry-dev-datos

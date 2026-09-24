@@ -1,0 +1,97 @@
+{#
+  Plantilla de compose de MEP.
+
+  Reglas de esta plantilla, que valen para todos los productos:
+
+  - Las imágenes se interpolan con Jinja desde el manifiesto ({{ '{{ imagenes.x }}' }}),
+    así quedan pinneadas por digest en el archivo generado.
+  - Los VALORES del cliente no se interpolan con Jinja: viajan con ${VARIABLE}, que
+    docker compose resuelve leyendo el .env del directorio del stack. Así el compose
+    generado se puede leer, versionar y mandar por mail sin que lleve nada del
+    cliente adentro.
+  - Jinja se usa solo para lo que cambia la ESTRUCTURA del archivo (qué servicios
+    existen, dónde se publica un puerto), no para rellenar valores.
+#}
+# ------------------------------------------------------------------
+# GENERADO POR deployCenter — no editar a mano.
+# Producto {{ producto }} · release {{ release }}
+# Los cambios hechos acá se pierden en el próximo despliegue.
+# ------------------------------------------------------------------
+name: {{ producto }}
+
+services:
+
+  api:
+    image: {{ imagenes.api }}
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - {{ producto }}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  web:
+    image: {{ imagenes.web }}
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - api
+    ports:
+      # Por defecto se publica solo en loopback: casi todos los clientes ponen su
+      # propio reverse proxy adelante. Se cambia con MEP_EXPONER_EN en el .env.
+      - "{{ env.get('MEP_EXPONER_EN', '127.0.0.1') }}:${MEP_PUERTO_WEB}:8080"
+    networks:
+      - {{ producto }}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  db:
+    # Imagen de terceros: no la publica Accusys, así que no está en el manifiesto.
+    # Va por tag fijo — nunca latest — y la sube el cliente con el resto del stack.
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${MEP_DB_NOMBRE}
+      POSTGRES_USER: ${MEP_DB_USUARIO}
+      POSTGRES_PASSWORD: ${MEP_DB_CLAVE}
+    volumes:
+      - datos-db:/var/lib/postgresql/data
+    networks:
+      - {{ producto }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MEP_DB_USUARIO} -d ${MEP_DB_NOMBRE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+networks:
+  {{ producto }}:
+    name: {{ producto }}
+
+volumes:
+  datos-db:
+    name: {{ producto }}-datos-db

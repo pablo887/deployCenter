@@ -1,0 +1,56 @@
+# Pipeline de validación de releases.
+#
+# Corre en cada push. Lo que hace es simple y es todo lo que la Fase 0 necesita:
+# ningún manifiesto entra a main si no está pinneado por digest, si le falta un
+# healthcheck o si su plantilla no renderiza.
+#
+# El paso de firma y publicación NO está acá todavía: falta decidir dónde viven
+# las claves de cosign (pendiente 6 del documento de arquitectura). Mientras tanto
+# el pipeline valida, y publicar es manual.
+
+trigger:
+  branches:
+    include: [main]
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  PYTHON_VERSION: '3.11'
+
+steps:
+  - task: UsePythonVersion@0
+    displayName: Python $(PYTHON_VERSION)
+    inputs:
+      versionSpec: '$(PYTHON_VERSION)'
+
+  - script: |
+      python -m pip install --upgrade pip
+      python -m pip install -e ".[dev]"
+    displayName: Instalar dependencias
+
+  - script: python -m ruff check src tests
+    displayName: Lint
+
+  - script: python -m pytest --junitxml=resultados.xml
+    displayName: Tests y validación de los manifiestos del repo
+
+  - task: PublishTestResults@2
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFiles: resultados.xml
+      testRunTitle: deployCenter
+
+  # Comprobación extra: que docker compose acepte lo que generamos. Es lo que
+  # más se parece a lo que va a pasar en el servidor del cliente.
+  - script: |
+      set -e
+      mkdir -p .ci && cp ejemplos/cliente-demo/.env.ejemplo .ci/.env
+      python -m deploycenter.cli --sin-color render \
+        --producto mep --release 4.7.0 \
+        --entorno .ci/.env --salida .ci/docker-compose.yml
+      cd .ci && docker compose config --quiet
+    displayName: El compose generado es válido para docker compose

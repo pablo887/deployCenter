@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accusys.com.ar/deploycenter/schema/manifiesto.schema.json",
+  "title": "Manifiesto de release de deployCenter",
+  "description": "Contrato ejecutable de un release. Lo publica Accusys firmado y lo consume el agente en el servidor del cliente.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "producto",
+    "release",
+    "publicado",
+    "canal",
+    "imagenes",
+    "desde_version",
+    "db_migrations",
+    "rollback_seguro",
+    "healthchecks",
+    "changelog"
+  ],
+  "properties": {
+    "producto": {
+      "description": "Código del producto en la plataforma. Coincide con la carpeta en productos/ y con el repo en el registry.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,30}$"
+    },
+    "release": {
+      "description": "Versión semántica del release.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$"
+    },
+    "publicado": {
+      "description": "Fecha de publicación. Es contra esta fecha que se compara el mantenimiento del cliente, no contra el número de versión.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "canal": {
+      "description": "estable para el parque general, anticipado para los clientes que aceptan probar antes.",
+      "enum": ["estable", "anticipado"]
+    },
+    "imagenes": {
+      "description": "Servicio -> referencia de imagen. Para publicar tienen que estar pinneadas por digest.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9-]{0,30}$": {
+          "type": "string",
+          "minLength": 3
+        }
+      }
+    },
+    "desde_version": {
+      "description": "Rango de versiones desde las que se puede saltar directo a esta. Formatos: '*', '>=4.5.0', o varios separados por coma.",
+      "type": "string",
+      "minLength": 1
+    },
+    "db_migrations": {
+      "description": "Si la versión aplica migraciones de esquema al arrancar. En true el release deja de ser autoservicio.",
+      "type": "boolean"
+    },
+    "rollback_seguro": {
+      "description": "Si volver a la versión anterior deja el sistema consistente.",
+      "type": "boolean"
+    },
+    "migraciones_compatibles": {
+      "description": "Solo tiene sentido con db_migrations en true: declara que las migraciones son compatibles hacia atrás (expand/contract) y que por eso el rollback sigue siendo seguro.",
+      "type": "boolean",
+      "default": false
+    },
+    "critico_seguridad": {
+      "description": "Parche que se ofrece aunque el mantenimiento del cliente esté vencido.",
+      "type": "boolean",
+      "default": false
+    },
+    "variables_nuevas": {
+      "description": "Variables de entorno que esta versión necesita y que el cliente puede no tener.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["nombre", "obligatoria", "descripcion"],
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+          },
+          "obligatoria": { "type": "boolean" },
+          "default": { "type": ["string", "null"], "default": null },
+          "descripcion": { "type": "string", "minLength": 10 },
+          "secreta": {
+            "description": "Si es true, el valor nunca se muestra en pantalla ni en los logs. El valor vive siempre en el servidor del cliente.",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    "healthchecks": {
+      "description": "Cómo se comprueba que la versión levantó. Sin esto no hay criterio objetivo de éxito ni rollback automático.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["servicio", "url", "espera", "timeout_s"],
+        "properties": {
+          "servicio": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+          },
+          "url": {
+            "type": "string",
+            "pattern": "^https?://"
+          },
+          "espera": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+          },
+          "timeout_s": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 900
+          }
+        }
+      }
+    },
+    "changelog": {
+      "description": "Ruta del changelog relativa a la raíz del repo de releases.",
+      "type": "string",
+      "minLength": 3
+    },
+    "firma": {
+      "description": "Firma del manifiesto. La agrega el paso de publicación; no se escribe a mano.",
+      "type": "string"
+    }
+  }
+}

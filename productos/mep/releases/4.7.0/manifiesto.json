@@ -1,0 +1,37 @@
+{
+  "producto": "mep",
+  "release": "4.7.0",
+  "publicado": "2026-09-18",
+  "canal": "estable",
+  "imagenes": {
+    "api": "registry.accusys.com.ar/mep/api@sha256:9f2c1b7a4e08d35c6f21ab90c47e5d8236bb0741e9c5a3df82610bc4ad79e3f5",
+    "web": "registry.accusys.com.ar/mep/web@sha256:41ab77c0e5d9238bfa16c3e470b85d2c9f640a71e83bd5926cf10847ab3de260"
+  },
+  "desde_version": ">=4.5.0",
+  "db_migrations": false,
+  "rollback_seguro": true,
+  "critico_seguridad": false,
+  "variables_nuevas": [
+    {
+      "nombre": "MEP_FIRMA_TIMEOUT_S",
+      "obligatoria": true,
+      "default": "30",
+      "descripcion": "Timeout de firma del conector, en segundos. Subirlo si el HSM del cliente responde lento."
+    }
+  ],
+  "healthchecks": [
+    {
+      "servicio": "api",
+      "url": "http://api:8080/health",
+      "espera": 200,
+      "timeout_s": 120
+    },
+    {
+      "servicio": "web",
+      "url": "http://web:8080/healthz",
+      "espera": 200,
+      "timeout_s": 60
+    }
+  ],
+  "changelog": "productos/mep/releases/4.7.0/changelog.md"
+}

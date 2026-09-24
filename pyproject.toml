@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deploycenter"
+version = "0.1.0"
+description = "Toolchain de releases y despliegue para los productos del área (Fase 0)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Propietario - Accusys Technology S.R.L." }
+authors = [{ name = "Accusys Technology" }]
+
+# Deliberadamente pocas: este paquete también corre en el servidor del cliente.
+dependencies = [
+    "jsonschema>=4.21",
+    "PyYAML>=6.0",
+    "Jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+dc = "deploycenter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"deploycenter.recursos" = ["*.json"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
