@@ -236,6 +236,39 @@ def cmd_logs(args):
     return OK
 
 
+def cmd_ui(args):
+    import secrets
+
+    from .ui import servidor as srv
+
+    verde, _rojo, amarillo, gris, fin = paleta(usar_color(args))
+    s = simbolos()
+    token = args.token or secrets.token_urlsafe(24)
+    url = f"http://{args.host}:{args.puerto}/"
+
+    instalaciones = srv.descubrir_instalaciones(args.raiz)
+    print(f"{verde}{s['ok']}{fin} UI local en {url}")
+    print(f"  raíz       {args.raiz} ({len(instalaciones)} instalación/es)")
+    print(f"  paquetes   {args.paquetes}")
+    print(f"  token      {token}")
+    print(f"  servidor   {srv.servidor_disponible()}")
+    if not srv.es_local(args.host):
+        print()
+        print(f"{amarillo}{s['aviso']}{fin} está publicada fuera de loopback y no tiene login: "
+              f"quien llegue puede desplegar")
+        print(f"  {gris}usala solo detrás de un túnel o de una red controlada{fin}")
+    print()
+    print(f"  {gris}Ctrl-C para terminar{fin}")
+
+    try:
+        srv.servir(args.raiz, args.paquetes, host=args.host, puerto=args.puerto,
+                   token=token, espera_cancelacion_s=args.espera_cancelacion,
+                   clave_publica=args.clave_publica)
+    except KeyboardInterrupt:  # pragma: no cover
+        print()
+    return OK
+
+
 # --------------------------------------------------------------------------- #
 
 def construir_parser():
@@ -285,6 +318,19 @@ def construir_parser():
     lg.add_argument("--servicio")
     lg.add_argument("--lineas", type=int, default=200)
     lg.set_defaults(func=cmd_logs)
+
+    u = sub.add_parser("ui", help="levanta la UI local en el servidor del cliente")
+    u.add_argument("--raiz", required=True,
+                   help="directorio que contiene los stacks de los productos")
+    u.add_argument("--paquetes", required=True,
+                   help="directorio donde se dejan los paquetes de release")
+    u.add_argument("--host", default="127.0.0.1",
+                   help="por defecto loopback: la UI no tiene login")
+    u.add_argument("--puerto", type=int, default=9000)
+    u.add_argument("--token", help="si no se indica, se genera uno y se imprime")
+    u.add_argument("--clave-publica")
+    u.add_argument("--espera-cancelacion", type=int, default=desp_mod.ESPERA_CANCELACION_S)
+    u.set_defaults(func=cmd_ui)
 
     return p
 

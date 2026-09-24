@@ -19,7 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+# La UI local solo hace falta en el servidor del cliente, no en el pipeline.
+ui = ["Flask>=3.0", "waitress>=3.0"]
+dev = ["pytest>=8.0", "ruff>=0.5", "Flask>=3.0", "waitress>=3.0"]
 
 [project.scripts]
 dc = "deploycenter.cli:main"
@@ -30,6 +32,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "deploycenter.recursos" = ["*.json"]
+"deploycenter.agente.ui" = ["plantillas/*.html"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]

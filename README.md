@@ -211,6 +211,38 @@ Levanta un stack real con nginx en un directorio temporal, lo actualiza, y
 después despliega una versión que no levanta para ver la vuelta atrás. Necesita
 el engine de Docker corriendo, no solo el CLI.
 
+### La UI local
+
+```bash
+dc-agent ui --raiz /opt/accusys --paquetes /var/lib/deploycenter/paquetes
+```
+
+Escucha en `http://127.0.0.1:9000`. Da lo mismo que el CLI pero con pantalla:
+qué corre en cada instalación, qué paquetes hay disponibles, preflight,
+despliegue con **la cuenta regresiva visible y el botón de cancelar**, vuelta
+atrás, historial y logs.
+
+El despliegue corre en un hilo y la pantalla lo sigue por polling: se puede
+cerrar la pestaña, la operación la ejecuta el agente. El estado real vive en
+disco, en la instalación; la UI es una ventana, no la fuente de verdad.
+
+Tres decisiones de seguridad, porque esto corre en el servidor de un banco:
+
+- **Escucha en loopback.** No tiene login: quien llega a la página puede
+  desplegar. El acceso normal es por consola del servidor o por túnel SSH. Con
+  `--host 0.0.0.0` la página lo avisa en un banner.
+- **Las acciones piden un token** en un header, que se genera al arrancar y se
+  imprime. Va en header y no en cookie, así que un formulario cruzado desde otra
+  pestaña no lo puede mandar.
+- **Se valida el header Host**, que es lo que corta el DNS rebinding.
+
+La página no carga nada de internet: tipografías del sistema, CSS y JS inline.
+El servidor del cliente no tiene salida, y hay un test que lo verifica.
+
+Si `waitress` está instalado se usa ese servidor; si no, cae al de desarrollo de
+Flask, que avisa en cada arranque que no es para producción. El extra `ui` lo
+incluye.
+
 ### Cómo se instala en el cliente
 
 `ejemplos/agente-compose.yml` tiene el compose de referencia. Lo importante es
@@ -250,7 +282,6 @@ que no pasa por ahí no llega a main.
 
 - [ ] Correr `ejemplos/e2e-agente.sh` con el engine de Docker levantado: el
       despliegue real todavía no se ejercitó de punta a punta
-- [ ] UI local del agente en el puerto 9000, como respaldo cuando no haya hub
 - [ ] Auto-update del agente, que nunca debe ocurrir durante un despliegue
 - [ ] Enrolamiento: el token propio del agente, que hoy no existe porque no hay
       hub contra el cual enrolarse

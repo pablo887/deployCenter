@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>deployCenter — agente local</title>
+<style>
+/* Tipografías del sistema a propósito: esta página se sirve desde el servidor
+   del cliente, que no tiene salida a internet. Nada de CDN. */
+:root{
+  --ink:#0F2350; --paper:#F6F8FC; --blanco:#fff; --navy:#0A1F44;
+  --azul:#1A52E8; --azul-claro:#2B8BF5; --azul-pale:#E7EFFE; --tinte:#EDF3FC;
+  --verde:#14A07A; --verde-pale:#E3F6EF; --naranja:#F5822B; --naranja-pale:#FDF0E3;
+  --rojo:#E04F5F; --rojo-pale:#FCE9EB; --gris:#5A6A85; --linea:#E3E9F2;
+  --r:14px; --sombra:0 1px 3px rgba(15,35,80,.06),0 8px 24px rgba(15,35,80,.05);
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.55}
+header{background:var(--navy);color:#fff;padding:14px 26px;display:flex;
+  align-items:center;gap:14px;flex-wrap:wrap}
+.marca{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.05rem}
+.marca .m{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--azul),var(--azul-claro));font-size:.85rem}
+.marca i{font-style:normal;color:var(--azul-claro)}
+.marca .sub{font-size:.6rem;font-weight:600;letter-spacing:.14em;color:#9FB6DC;
+  border-left:1px solid rgba(255,255,255,.2);padding-left:10px}
+header .host{margin-left:auto;font-size:.78rem;color:#9FB6DC;font-family:var(--mono)}
+.alerta-exp{background:var(--naranja);color:#3a1e00;padding:9px 26px;font-size:.85rem;font-weight:600}
+main{display:grid;grid-template-columns:288px 1fr;gap:22px;padding:22px 26px;
+  align-items:start;max-width:1320px;margin:0 auto}
+h2{font-size:1.15rem;margin:0 0 12px}
+h3{font-size:.72rem;letter-spacing:.09em;color:var(--gris);margin:22px 0 9px;text-transform:uppercase}
+.tarjeta{background:var(--blanco);border:1px solid var(--linea);border-radius:var(--r);
+  padding:16px 18px;box-shadow:var(--sombra);margin-bottom:14px}
+.lista{display:flex;flex-direction:column;gap:9px}
+.item{background:var(--blanco);border:1px solid var(--linea);border-left:3px solid var(--linea);
+  border-radius:11px;padding:11px 14px;cursor:pointer;text-align:left;width:100%;
+  font:inherit;color:inherit;transition:border-color .12s,background .12s}
+.item:hover{background:var(--azul-pale)}
+.item.sel{border-color:var(--azul);border-left-color:var(--azul);background:var(--azul-pale)}
+.item .n{font-weight:600}
+.item .v{font-size:.8rem;color:var(--gris);font-family:var(--mono)}
+.pill{display:inline-block;font-size:.7rem;font-weight:700;padding:2px 9px;border-radius:999px;
+  background:var(--tinte);color:var(--gris);vertical-align:middle}
+.pill.ok{background:var(--verde-pale);color:var(--verde)}
+.pill.mal{background:var(--rojo-pale);color:var(--rojo)}
+.pill.trabajo{background:var(--naranja-pale);color:#B45F14}
+.pill.azul{background:var(--azul-pale);color:var(--azul)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--linea);vertical-align:top}
+th{font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;color:var(--gris);background:#FAFCFF}
+tr:last-child td{border-bottom:0}
+button{font:inherit;cursor:pointer;border-radius:9px;border:1px solid var(--linea);
+  background:var(--blanco);padding:7px 14px;font-weight:600;color:var(--ink)}
+button:hover:not(:disabled){background:var(--tinte)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primario{background:var(--azul);border-color:var(--azul);color:#fff}
+button.primario:hover:not(:disabled){background:#1442c8}
+button.peligro{background:var(--rojo);border-color:var(--rojo);color:#fff}
+button.chico{padding:4px 11px;font-size:.8rem}
+.filas{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.vacio{color:var(--gris);font-size:.9rem;padding:8px 0}
+dl.datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px 20px;margin:0}
+dl.datos dt{font-size:.72rem;color:var(--gris)}
+dl.datos dd{margin:0;font-weight:600;font-size:.92rem;overflow-wrap:anywhere}
+pre.logs{background:var(--navy);color:#DCE7F8;border-radius:11px;padding:14px 16px;
+  overflow:auto;max-height:340px;font-family:var(--mono);font-size:.78rem;line-height:1.5;margin:0}
+/* la pieza central: la cuenta regresiva antes de la vuelta atrás */
+.regresiva{background:var(--rojo-pale);border:1px solid var(--rojo);border-radius:var(--r);
+  padding:18px 20px;margin-bottom:14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.regresiva .reloj{font-size:2.3rem;font-weight:700;font-variant-numeric:tabular-nums;color:var(--rojo);
+  min-width:64px;text-align:center}
+.regresiva .txt{flex:1;min-width:240px;font-size:.9rem}
+.regresiva .txt b{display:block;font-size:1rem;margin-bottom:2px}
+.trabajando{background:var(--azul-pale);border:1px solid var(--azul-claro)}
+.trabajando .reloj{color:var(--azul)}
+.eventos{font-family:var(--mono);font-size:.78rem;color:var(--gris);margin-top:8px}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="marca">
+    <span class="m">D</span><span>deploy<i>Center</i></span>
+    <span class="sub">AGENTE<br>LOCAL</span>
+  </div>
+  <span class="host">{{ host }}</span>
+</header>
+{% if expuesta %}
+<div class="alerta-exp">
+  Esta pantalla está publicada fuera de loopback y no tiene login: quien llega acá
+  puede desplegar. Usala solo detrás de un túnel o de una red controlada.
+</div>
+{% endif %}
+
+<main>
+  <section>
+    <h2>Instalaciones</h2>
+    <div id="lista" class="lista"><div class="vacio">Cargando…</div></div>
+  </section>
+
+  <section id="detalle"><div class="vacio">Elegí una instalación.</div></section>
+</main>
+
+<script>
+const TOKEN = {{ token|tojson }};
+let seleccion = null, detalle = null, temporizador = null;
+
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function traer(url, opciones = {}) {
+  const r = await fetch(url, {
+    ...opciones,
+    headers: { "Content-Type": "application/json", "X-DC-Token": TOKEN, ...(opciones.headers || {}) },
+  });
+  const datos = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(datos.error || `error ${r.status}`);
+  return datos;
+}
+
+function pill(estado) {
+  const clases = { ok: "ok", degradado: "mal", desplegando: "trabajo" };
+  return `<span class="pill ${clases[estado] || ""}">${esc(estado)}</span>`;
+}
+
+async function cargarLista() {
+  const { instalaciones } = await traer("/api/instalaciones");
+  $("#lista").innerHTML = instalaciones.length ? instalaciones.map(i => `
+    <button class="item ${i.nombre === seleccion ? "sel" : ""}" data-n="${esc(i.nombre)}">
+      <div class="n">${esc(i.producto || i.nombre)} ${pill(i.estado)}</div>
+      <div class="v">${esc(i.version || "sin desplegar")}${i.operacion ? " · en curso" : ""}</div>
+    </button>`).join("") : '<div class="vacio">No hay instalaciones bajo la raíz configurada.</div>';
+  $("#lista").querySelectorAll(".item").forEach(b =>
+    b.onclick = () => { seleccion = b.dataset.n; cargarDetalle(); });
+  if (!seleccion && instalaciones.length) { seleccion = instalaciones[0].nombre; cargarDetalle(); }
+}
+
+function panelOperacion(op) {
+  if (!op) return "";
+  if (op.estado !== "corriendo") {
+    const mal = op.error || (op.resultado && op.resultado.estado &&
+      !["ok", "revertido"].includes(op.resultado.estado));
+    const texto = op.error || (op.resultado && (op.resultado.detalle ||
+      (op.resultado.ok ? "sin bloqueos" : "con bloqueos"))) || "terminada";
+    return `<div class="tarjeta" style="border-left:3px solid var(--${mal ? "rojo" : "verde"})">
+      <b>${esc(op.tipo)}</b> ${pill(mal ? "falló" : "ok")}
+      <div class="eventos">${esc(texto)}</div></div>`;
+  }
+  if (op.cancelable) {
+    return `<div class="regresiva">
+      <div class="reloj" id="reloj">${op.segundos_restantes}</div>
+      <div class="txt"><b>El despliegue falló la verificación</b>
+        Se va a volver a la versión anterior cuando termine la cuenta.
+        Cancelá solo si querés conservar el estado actual para diagnosticarlo.</div>
+      <button class="peligro" id="cancelar">Cancelar la vuelta atrás</button>
+    </div>`;
+  }
+  return `<div class="regresiva trabajando">
+    <div class="reloj">·</div>
+    <div class="txt"><b>${esc(op.tipo)} en curso — ${esc(op.fase)}</b>
+      ${op.segundos}s. Podés cerrar esta pestaña: la operación la ejecuta el agente.</div>
+  </div>`;
+}
+
+function render() {
+  const d = detalle;
+  const op = d.operacion;
+  const ocupada = !!op || d.bloqueada;
+
+  const paquetes = d.paquetes.length ? `<table><thead><tr>
+      <th>Versión</th><th>Publicado</th><th>Canal</th><th></th></tr></thead><tbody>
+      ${d.paquetes.map(p => `<tr>
+        <td><b>${esc(p.release)}</b> ${p.firmado ? '<span class="pill azul">firmado</span>' : ""}
+            ${p.autoservicio ? "" : '<span class="pill trabajo">asistido</span>'}</td>
+        <td>${esc(p.publicado)}</td><td>${esc(p.canal)}</td>
+        <td class="filas">
+          <button class="chico" data-acc="preflight" data-p="${esc(p.nombre)}" ${ocupada ? "disabled" : ""}>Preflight</button>
+          <button class="chico primario" data-acc="desplegar" data-p="${esc(p.nombre)}"
+                  ${ocupada || !p.autoservicio ? "disabled" : ""}>Desplegar</button>
+        </td></tr>`).join("")}</tbody></table>`
+    : '<div class="vacio">No hay paquetes en el directorio configurado.</div>';
+
+  $("#detalle").innerHTML = `
+    <h2>${esc(d.producto || d.nombre)} ${pill(d.estado)}</h2>
+    ${panelOperacion(op)}
+    <div class="tarjeta"><dl class="datos">
+      <div><dt>Versión</dt><dd>${esc(d.version || "—")}</dd></div>
+      <div><dt>Directorio</dt><dd style="font-family:var(--mono);font-size:.8rem">${esc(d.directorio)}</dd></div>
+      <div><dt>Actualizado</dt><dd>${esc(d.actualizado || "—")}</dd></div>
+      <div><dt>Punto de retorno</dt><dd>${d.hay_retorno ? esc(d.retorno_a || "sí") : "—"}</dd></div>
+    </dl>
+    <div class="filas" style="margin-top:14px">
+      <button id="rollback" ${!d.hay_retorno || ocupada ? "disabled" : ""}>Volver a la versión anterior</button>
+      <button id="verlogs">Ver logs</button>
+    </div></div>
+
+    <h3>Servicios</h3>
+    <div class="tarjeta">${d.servicios.length ? `<table><thead><tr>
+        <th>Servicio</th><th>Estado</th><th>Salud</th></tr></thead><tbody>
+        ${d.servicios.map(s => `<tr><td>${esc(s.servicio)}</td><td>${esc(s.estado)}</td>
+          <td>${esc(s.salud || "—")}</td></tr>`).join("")}</tbody></table>`
+      : `<div class="vacio">${esc(d.servicios_error || "Sin servicios corriendo.")}</div>`}</div>
+
+    <h3>Versiones disponibles</h3>
+    <div class="tarjeta">${paquetes}</div>
+
+    <h3>Historial</h3>
+    <div class="tarjeta">${d.historial.length ? `<table><thead><tr>
+        <th>Cuándo</th><th>Operación</th><th>Resultado</th><th>Detalle</th></tr></thead><tbody>
+        ${d.historial.slice(0, 12).map(e => `<tr><td>${esc(e.ts)}</td><td>${esc(e.operacion)}</td>
+          <td>${pill(e.resultado)}</td>
+          <td>${esc([e.desde, e.hacia].filter(Boolean).join(" → "))} ${esc(e.detalle || "")}</td>
+        </tr>`).join("")}</tbody></table>` : '<div class="vacio">Sin historial.</div>'}</div>
+
+    <div id="zonalogs"></div>`;
+
+  $("#detalle").querySelectorAll("[data-acc]").forEach(b => b.onclick = () =>
+    accion(`/api/instalaciones/${encodeURIComponent(seleccion)}/${b.dataset.acc}`,
+           { paquete: b.dataset.p }));
+  $("#rollback").onclick = () => {
+    if (confirm("¿Volver a la versión anterior?"))
+      accion(`/api/instalaciones/${encodeURIComponent(seleccion)}/rollback`, {});
+  };
+  $("#verlogs").onclick = verLogs;
+  const cancelar = $("#cancelar");
+  if (cancelar) cancelar.onclick = async () => {
+    cancelar.disabled = true;
+    try { await traer(`/api/operaciones/${op.id}/cancelar`, { method: "POST" }); }
+    catch (e) { alert(e.message); }
+    cargarDetalle();
+  };
+}
+
+async function accion(url, cuerpo) {
+  try {
+    await traer(url, { method: "POST", body: JSON.stringify(cuerpo) });
+    cargarDetalle();
+  } catch (e) { alert(e.message); }
+}
+
+async function verLogs() {
+  const { logs, error } = await traer(
+    `/api/instalaciones/${encodeURIComponent(seleccion)}/logs?lineas=300`);
+  $("#zonalogs").innerHTML = `<h3>Logs</h3><pre class="logs">${esc(logs || error || "sin logs")}</pre>`;
+}
+
+async function cargarDetalle() {
+  if (!seleccion) return;
+  try {
+    detalle = await traer(`/api/instalaciones/${encodeURIComponent(seleccion)}`);
+    render();
+  } catch (e) {
+    $("#detalle").innerHTML = `<div class="vacio">${esc(e.message)}</div>`;
+  }
+}
+
+function tic() {
+  const activa = detalle && detalle.operacion;
+  const reloj = $("#reloj");
+  if (reloj) reloj.textContent = Math.max(0, +reloj.textContent - 1);
+  clearTimeout(temporizador);
+  temporizador = setTimeout(async () => {
+    await cargarLista();
+    if (seleccion) await cargarDetalle();
+    tic();
+  }, activa ? 1500 : 6000);
+}
+
+cargarLista().then(tic);
+</script>
+</body>
+</html>

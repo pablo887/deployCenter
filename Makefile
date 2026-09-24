@@ -1,4 +1,4 @@
-.PHONY: instalar test lint validar demo e2e limpiar
+.PHONY: instalar test lint validar demo e2e ui limpiar
 
 PY ?= python
 
@@ -34,3 +34,7 @@ limpiar:
 # prueba la vuelta atrás. Necesita el engine de Docker corriendo.
 e2e:
 	bash ejemplos/e2e-agente.sh
+
+# UI local contra un entorno de demo en /tmp. Ctrl-C para terminar.
+ui:
+	$(PY) -m deploycenter.agente.cli ui --raiz .demo/stacks --paquetes .demo/paquetes
