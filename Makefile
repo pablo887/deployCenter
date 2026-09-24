@@ -1,4 +1,4 @@
-.PHONY: instalar test lint validar demo limpiar
+.PHONY: instalar test lint validar demo e2e limpiar
 
 PY ?= python
 
@@ -29,3 +29,8 @@ demo:
 limpiar:
 	rm -rf .demo .pytest_cache .ruff_cache
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
+
+# Despliegue real contra Docker: levanta un stack de nginx, lo actualiza y
+# prueba la vuelta atrás. Necesita el engine de Docker corriendo.
+e2e:
+	bash ejemplos/e2e-agente.sh

@@ -58,6 +58,29 @@ def escribir_env(entorno, ruta):
     return ruta
 
 
+def agregar_al_env(ruta, nuevas, comentario=None):
+    """Agrega variables al final del .env sin tocar lo que ya está.
+
+    A propósito no se reescribe el archivo: el .env del cliente suele tener
+    comentarios y un orden que alguien puso por algo. Reordenarlo en cada
+    despliegue sería destruir información ajena.
+    """
+    ruta = Path(ruta)
+    if not nuevas:
+        return ruta
+    existente = ruta.read_text(encoding="utf-8") if ruta.is_file() else ""
+    partes = []
+    if existente and not existente.endswith("\n"):
+        partes.append("\n")
+    partes.append("\n")
+    if comentario:
+        partes.append(f"# {comentario}\n")
+    for nombre, valor in nuevas:
+        partes.append(f"{nombre}={valor}\n")
+    ruta.write_text(existente + "".join(partes), encoding="utf-8")
+    return ruta
+
+
 def declaradas(manifiesto):
     return list(manifiesto.get("variables_nuevas") or [])
 

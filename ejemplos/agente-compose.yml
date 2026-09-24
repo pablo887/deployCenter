@@ -1,0 +1,43 @@
+# Cómo corre el agente en el servidor del cliente.
+#
+# Uno por host. Atiende todos los productos que haya bajo /opt/accusys: cada uno
+# con su directorio, su .env, su estado y su punto de retorno.
+#
+# En Fase 1 el agente no queda como servicio permanente: se lo invoca para una
+# operación puntual. El `command` de abajo es un ejemplo; en Fase 2, cuando
+# exista el canal con el hub, este mismo contenedor pasa a quedar levantado
+# haciendo long-poll.
+
+name: deploycenter-agente
+
+services:
+  agente:
+    image: registry.accusys.com.ar/deploycenter/agente:0.1.0
+    # Sin restart: en Fase 1 corre y termina.
+    volumes:
+      # El socket de Docker. Es acceso de root al host: está acotado por
+      # --raiz-permitida, no por el montaje.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Los stacks de los productos instalados en este host.
+      - /opt/accusys:/stacks
+      # El paquete de release que se va a desplegar.
+      - ./paquete:/paquete:ro
+      # Clave pública para verificar la firma del manifiesto.
+      - ./cosign.pub:/etc/deploycenter/cosign.pub:ro
+    command:
+      - --raiz-permitida=/stacks
+      - desplegar
+      - --instalacion=/stacks/mep
+      - --paquete=/paquete
+      - --clave-publica=/etc/deploycenter/cosign.pub
+
+# Para el smoke test HTTP, el agente tiene que poder resolver los nombres de los
+# servicios del producto. Si se lo quiere conectar a la red de un stack:
+#
+# networks:
+#   mep:
+#     external: true
+#
+# y agregarle `networks: [mep]` al servicio. Si no se hace, el smoke test se
+# reporta como omitido —no como exitoso— y la verificación se apoya en el
+# estado de los contenedores, que no necesita red.

@@ -25,44 +25,15 @@ from . import compose, digests, firma
 from . import manifiesto as mf
 from . import variables as vars_
 from .errores import ErrorArchivo, ErrorDeployCenter, ErrorHerramienta, ErrorValidacion
-
-OK, FALLA_VALIDACION, ERROR_USO = 0, 1, 2
-
-VERDE, ROJO, AMARILLO, GRIS, FIN = "\033[32m", "\033[31m", "\033[33m", "\033[90m", "\033[0m"
-
-# La consola de Windows arranca en cp1252 y no sabe escribir U+2713. Se intenta
-# pasar los flujos a UTF-8 y, si no se puede, se cae a símbolos ASCII: es
-# preferible una salida más fea que un stack trace sobre un comando que funcionó.
-SIMBOLOS_UNICODE = {"ok": "✓", "mal": "✗", "punto": "·", "mas": "+"}
-SIMBOLOS_ASCII = {"ok": "OK", "mal": "XX", "punto": "-", "mas": "+"}
-
-
-def preparar_salida():
-    for flujo in (sys.stdout, sys.stderr):
-        try:
-            flujo.reconfigure(encoding="utf-8")
-        except (AttributeError, OSError, ValueError):  # pragma: no cover
-            pass
-
-
-def simbolos():
-    codificacion = getattr(sys.stdout, "encoding", None) or "ascii"
-    try:
-        "".join(SIMBOLOS_UNICODE.values()).encode(codificacion)
-        return SIMBOLOS_UNICODE
-    except (UnicodeEncodeError, LookupError):  # pragma: no cover - depende de la consola
-        return SIMBOLOS_ASCII
-
-
-def _color(activo):
-    if activo:
-        return VERDE, ROJO, AMARILLO, GRIS, FIN
-    return "", "", "", "", ""
-
-
-def _usar_color(args):
-    es_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
-    return es_tty and not getattr(args, "sin_color", False)
+from .salida import (  # noqa: F401  (re-export)
+    ERROR_USO,
+    FALLA_VALIDACION,
+    OK,
+    preparar_salida,
+    simbolos,
+)
+from .salida import paleta as _color
+from .salida import usar_color as _usar_color
 
 
 def raiz_por_defecto():
@@ -246,6 +217,50 @@ def cmd_schema(_args):
     return OK
 
 
+def cmd_empaquetar(args):
+    """Arma el paquete que consume el agente: manifiesto + plantilla + changelog.
+
+    Es la misma forma que va a entregar el hub en Fase 2, así que el agente no
+    tiene que cambiar cuando el hub aparezca.
+    """
+    verde, _rojo, _amarillo, gris, fin = _color(_usar_color(args))
+    s = simbolos()
+    raiz = Path(args.raiz) if args.raiz else raiz_por_defecto()
+
+    ruta_m = ruta_release(raiz, args.producto, args.release)
+    m = mf.cargar(ruta_m)
+    mf.exigir_valido(m, raiz=raiz)
+
+    producto = cargar_producto(raiz, args.producto)
+    ruta_p = raiz / "productos" / args.producto / producto.get(
+        "plantilla", "compose.plantilla.yaml")
+
+    destino = Path(args.salida)
+    destino.mkdir(parents=True, exist_ok=True)
+    copiados = []
+
+    (destino / "manifiesto.json").write_bytes(ruta_m.read_bytes())
+    copiados.append("manifiesto.json")
+    (destino / "compose.plantilla.yaml").write_bytes(ruta_p.read_bytes())
+    copiados.append("compose.plantilla.yaml")
+
+    changelog = raiz / m["changelog"]
+    if changelog.is_file():
+        (destino / "changelog.md").write_bytes(changelog.read_bytes())
+        copiados.append("changelog.md")
+
+    firma_origen = ruta_m.with_suffix(ruta_m.suffix + ".sig")
+    if firma_origen.is_file():
+        (destino / "manifiesto.json.sig").write_bytes(firma_origen.read_bytes())
+        copiados.append("manifiesto.json.sig")
+    else:
+        print(f"  {gris}sin firma: el agente no va a poder verificarla{fin}")
+
+    print(f"{verde}{s['ok']}{fin} {destino}")
+    print(f"  {gris}{', '.join(copiados)}{fin}")
+    return OK
+
+
 def cmd_nuevo_release(args):
     verde, _rojo, _amarillo, gris, fin = _color(_usar_color(args))
     s = simbolos()
@@ -367,6 +382,13 @@ def construir_parser():
     n.add_argument("--con-migraciones", action="store_true")
     n.add_argument("--sobrescribir", action="store_true")
     n.set_defaults(func=cmd_nuevo_release)
+
+    emp = sub.add_parser("empaquetar",
+                         help="arma el paquete de release que consume el agente")
+    emp.add_argument("--producto", required=True)
+    emp.add_argument("--release", required=True)
+    emp.add_argument("--salida", required=True, help="directorio destino del paquete")
+    emp.set_defaults(func=cmd_empaquetar)
 
     s = sub.add_parser("schema", help="imprime el JSON Schema del manifiesto")
     s.set_defaults(func=cmd_schema)

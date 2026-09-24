@@ -23,6 +23,7 @@ dev = ["pytest>=8.0", "ruff>=0.5"]
 
 [project.scripts]
 dc = "deploycenter.cli:main"
+dc-agent = "deploycenter.agente.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
