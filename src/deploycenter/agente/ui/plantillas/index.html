@@ -134,8 +134,13 @@ async function cargarLista() {
       <div class="n">${esc(i.producto || i.nombre)} ${pill(i.estado)}</div>
       <div class="v">${esc(i.version || "sin desplegar")}${i.operacion ? " · en curso" : ""}</div>
     </button>`).join("") : '<div class="vacio">No hay instalaciones bajo la raíz configurada.</div>';
-  $("#lista").querySelectorAll(".item").forEach(b =>
-    b.onclick = () => { seleccion = b.dataset.n; cargarDetalle(); });
+  const items = $("#lista").querySelectorAll(".item");
+  items.forEach(b => b.onclick = () => {
+    seleccion = b.dataset.n;
+    // el resaltado se mueve ya: esperar al próximo poll se siente roto
+    items.forEach(x => x.classList.toggle("sel", x === b));
+    cargarDetalle();
+  });
   if (!seleccion && instalaciones.length) { seleccion = instalaciones[0].nombre; cargarDetalle(); }
 }
 
