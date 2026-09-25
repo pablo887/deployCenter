@@ -295,6 +295,15 @@ class TestHook:
                           {"e": json.dumps(evento)}).scalar()
         assert r["claims"]["app_metadata"] == {"tenant_id": None, "dc_rol": "soporte"}
 
+    def test_no_depende_del_search_path_de_quien_lo_llama(self, db):
+        """Supabase Auth lo llama como supabase_auth_admin, con search_path=auth."""
+        evento = {"user_id": U["operador_andino"], "claims": {}}
+        with db.connect() as c:
+            c.execute(text("set search_path = pg_catalog"))
+            r = c.execute(text("select public.custom_access_token_hook(cast(:e as jsonb))"),
+                          {"e": json.dumps(evento)}).scalar()
+        assert r["claims"]["app_metadata"] == {"tenant_id": "andino", "dc_rol": "operador"}
+
 
 class TestMigraciones:
     def test_son_idempotentes(self, postgres_url):

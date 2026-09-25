@@ -450,10 +450,10 @@ que no pasa por ahí no llega a main.
 - [x] Migraciones SQL versionadas (`supabase/migrations/`)
 - [x] `dc-hub migrar --via-api`: migraciones por la Management API, para
       entornos sin salida al puerto de Postgres
-- [ ] Conectar el proyecto de Supabase real (`deploycenter-dev`): TOTP ya está
-      habilitado; falta aplicar las migraciones (`dc-hub migrar --via-api`),
-      activar el hook, cerrar el registro abierto y correr
-      `ejemplos/integracion-supabase.py`. Después, el dominio propio
+- [x] Proyecto de Supabase real (`deploycenter-dev`): migraciones aplicadas,
+      hook activo, TOTP habilitado, y `ejemplos/integracion-supabase.py` en
+      verde (tokens aal2 reales, JWKS, hook y RLS con los claims reales)
+- [ ] Cerrar el registro abierto en `deploycenter-dev` y el dominio propio
       (`auth.accusys.com.ar`)
 - [ ] Invitaciones: hoy el usuario se crea en el proveedor y se le asigna el rol
       con `dc-hub usuario` o la API; falta que el hub mande la invitación

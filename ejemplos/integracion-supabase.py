@@ -217,15 +217,20 @@ class Integracion:
                               token=aal1)
         if estado != 200:
             raise SystemExit(f"{clave}: enrolar TOTP {estado} {f}")
-        estado, d = self.auth("POST", f"/factors/{f['id']}/challenge", {}, token=aal1)
-        if estado != 200:
-            raise SystemExit(f"{clave}: desafío {estado} {d}")
-        estado, v = self.auth("POST", f"/factors/{f['id']}/verify",
-                              {"challenge_id": d["id"], "code": totp(f["totp"]["secret"])},
-                              token=aal1)
-        if estado != 200:
-            raise SystemExit(f"{clave}: verificar TOTP {estado} {v}")
-        return aal1, v["access_token"]
+        # Supabase exige que el desafío y la verificación vengan de la misma IP;
+        # detrás de un proxy con varias salidas eso no siempre pasa: otro desafío
+        for _intento in range(6):
+            estado, d = self.auth("POST", f"/factors/{f['id']}/challenge", {}, token=aal1)
+            if estado != 200:
+                raise SystemExit(f"{clave}: desafío {estado} {d}")
+            estado, v = self.auth("POST", f"/factors/{f['id']}/verify",
+                                  {"challenge_id": d["id"], "code": totp(f["totp"]["secret"])},
+                                  token=aal1)
+            if estado == 200:
+                return aal1, v["access_token"]
+            if not (isinstance(v, dict) and v.get("error_code") == "mfa_ip_address_mismatch"):
+                break
+        raise SystemExit(f"{clave}: verificar TOTP {estado} {v}")
 
     def identidad(self):
         print("identidad (JWKS real + hook)")
