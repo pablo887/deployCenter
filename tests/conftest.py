@@ -220,3 +220,193 @@ def instalacion_nueva(tmp_path):
     d.mkdir(parents=True)
     (d / ".env").write_text("MEP_PUERTO_WEB=8443\n", encoding="utf-8")
     return Instalacion(d).preparar()
+
+
+# --------------------------------------------------------------------------- #
+# Fase 2: hub y canal con el agente
+# --------------------------------------------------------------------------- #
+
+FIRMA_VALIDA = b"firma-de-prueba"
+
+
+class RelojHub:
+    """Reloj del hub que se puede adelantar a mano."""
+
+    def __init__(self):
+        import datetime
+        self.t = datetime.datetime(2026, 9, 25, 15, 0, 0)
+
+    def __call__(self):
+        return self.t
+
+    def avanzar(self, segundos):
+        import datetime
+        self.t += datetime.timedelta(seconds=segundos)
+
+
+@pytest.fixture
+def catalogo(tmp_path, base):
+    """Árbol productos/ con MEP 4.7.0 firmado y sellado, como lo publica Accusys."""
+    from deploycenter import compose as compose_mod
+
+    raiz = tmp_path / "catalogo"
+    prod = raiz / "productos" / "mep"
+    rel = prod / "releases" / "4.7.0"
+    rel.mkdir(parents=True)
+    (prod / "producto.yaml").write_text(
+        "codigo: mep\nnombre: MEP\nregistry: registry.accusys.com.ar/mep\n"
+        "plantilla: compose.plantilla.yaml\n", encoding="utf-8")
+    (prod / "compose.plantilla.yaml").write_text(PLANTILLA_AGENTE, encoding="utf-8")
+    m = dict(base, plantilla_sha256=compose_mod.huella(PLANTILLA_AGENTE))
+    (rel / "manifiesto.json").write_text(json.dumps(m), encoding="utf-8")
+    (rel / "manifiesto.json.sig").write_bytes(FIRMA_VALIDA)
+    (rel / "changelog.md").write_text("# MEP 4.7.0\n", encoding="utf-8")
+    return raiz
+
+
+@pytest.fixture
+def agregar_release(catalogo, base):
+    """Publica otro release de MEP en el catálogo de prueba."""
+    from deploycenter import compose as compose_mod
+
+    def _hacer(version, **campos):
+        rel = catalogo / "productos" / "mep" / "releases" / version
+        rel.mkdir(parents=True)
+        m = dict(base, release=version, plantilla_sha256=compose_mod.huella(PLANTILLA_AGENTE),
+                 changelog=f"productos/mep/releases/{version}/changelog.md")
+        m.update(campos)
+        (rel / "manifiesto.json").write_text(json.dumps(m), encoding="utf-8")
+        (rel / "manifiesto.json.sig").write_bytes(FIRMA_VALIDA)
+        (rel / "changelog.md").write_text(f"# MEP {version}\n", encoding="utf-8")
+        return m
+    return _hacer
+
+
+@pytest.fixture
+def reloj_hub():
+    return RelojHub()
+
+
+@pytest.fixture
+def hub(tmp_path, catalogo, reloj_hub):
+    """Hub con Banco Andino dado de alta y MEP adquirido hasta fin de año."""
+    from deploycenter.hub.servicio import Hub
+
+    h = Hub.desde_url(f"sqlite:///{tmp_path / 'hub.db'}", catalogo, reloj=reloj_hub)
+    h.crear_tenant("andino", "Banco Andino")
+    h.adquirir("andino", "mep", "2026-12-31")
+    return h
+
+
+@pytest.fixture
+def firma_falsa(monkeypatch):
+    """cosign no está en el entorno de tests: la firma es válida si es FIRMA_VALIDA."""
+    from pathlib import Path as _Path
+
+    from deploycenter import firma as firma_mod
+
+    def verificar(_manifiesto, _clave, ruta_firma, **_kw):
+        return _Path(ruta_firma).read_bytes() == FIRMA_VALIDA
+
+    monkeypatch.setattr(firma_mod, "verificar", verificar)
+    return verificar
+
+
+# --------------------------------------------------------------------------- #
+# Postgres real, para RLS y migraciones
+# --------------------------------------------------------------------------- #
+
+def _binarios_postgres():
+    import glob
+    import shutil
+
+    if shutil.which("initdb") and shutil.which("pg_ctl"):
+        return Path(shutil.which("initdb")).parent
+    candidatos = sorted(glob.glob("/usr/lib/postgresql/*/bin/initdb"))
+    return Path(candidatos[-1]).parent if candidatos else None
+
+
+@pytest.fixture(scope="session")
+def postgres_servidor():
+    """URL de un servidor Postgres para los tests.
+
+    Usa DC_TEST_PG_URL si está definida (una base cualquiera del servidor: los
+    tests crean las suyas). Si no, levanta un cluster efímero con initdb. Si no
+    hay Postgres, los tests se saltean, salvo con DC_EXIGIR_PG=1, que es lo que
+    usa el pipeline para que la RLS no quede sin probar sin que nadie se entere.
+    """
+    import os
+    import shutil
+    import socket
+    import subprocess
+    import tempfile
+
+    url = os.environ.get("DC_TEST_PG_URL")
+    if url:
+        yield url
+        return
+
+    binarios = _binarios_postgres()
+    if binarios is None:
+        if os.environ.get("DC_EXIGIR_PG"):
+            pytest.fail("DC_EXIGIR_PG está definido y no hay Postgres para los tests")
+        pytest.skip("no hay Postgres: definí DC_TEST_PG_URL o instalá postgresql")
+
+    como = []
+    base = Path(tempfile.mkdtemp(prefix="dc-pg-"))
+    base.chmod(0o755)
+    datos, socket_dir = base / "datos", base / "socket"
+    datos.mkdir()
+    socket_dir.mkdir()
+    if os.geteuid() == 0:  # initdb no corre como root
+        como = ["runuser", "-u", "postgres", "--"]
+        shutil.chown(datos, "postgres")
+        shutil.chown(socket_dir, "postgres")
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        puerto = s.getsockname()[1]
+
+    def correr(*argv):
+        r = subprocess.run([*como, *argv], capture_output=True, text=True)
+        if r.returncode != 0:
+            log = datos / "pg.log"
+            raise RuntimeError(f"{argv[0]} falló: {r.stderr or r.stdout}"
+                               + (log.read_text() if log.is_file() else ""))
+
+    correr(str(binarios / "initdb"), "-D", str(datos), "-U", "postgres",
+           "--auth=trust", "-E", "UTF8", "--locale=C")
+    correr(str(binarios / "pg_ctl"), "-D", str(datos), "-w", "-l", str(datos / "pg.log"),
+           "-o", f"-k {socket_dir} -p {puerto} -c listen_addresses='' -c fsync=off", "start")
+    try:
+        yield f"postgresql+psycopg://postgres@/postgres?host={socket_dir}&port={puerto}"
+    finally:
+        subprocess.run([*como, str(binarios / "pg_ctl"), "-D", str(datos), "-m", "immediate",
+                        "stop"], capture_output=True)
+        shutil.rmtree(base, ignore_errors=True)
+
+
+@pytest.fixture
+def postgres_url(postgres_servidor):
+    """Una base nueva por test, con las migraciones aplicadas."""
+    import uuid
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+
+    from deploycenter.hub import migraciones
+
+    nombre = "t_" + uuid.uuid4().hex[:12]
+    admin = create_engine(postgres_servidor, isolation_level="AUTOCOMMIT")
+    with admin.connect() as c:
+        c.exec_driver_sql(f"create database {nombre}")
+    url = make_url(postgres_servidor).set(database=nombre).render_as_string(hide_password=False)
+    engine = create_engine(url)
+    migraciones.aplicar(engine, migraciones.directorio_por_defecto(RAIZ))
+    engine.dispose()
+    try:
+        yield url
+    finally:
+        with admin.connect() as c:
+            c.exec_driver_sql(f"drop database if exists {nombre} with (force)")
+        admin.dispose()

@@ -29,7 +29,7 @@ from ... import manifiesto as mf
 from ...errores import ErrorDeployCenter
 from .. import despliegue as desp_mod
 from ..docker import Docker
-from ..instalacion import ErrorBloqueo, Instalacion, Paquete
+from ..instalacion import ErrorBloqueo, Paquete, descubrir_instalaciones  # noqa: F401
 from ..preflight import Preflight
 from .operaciones import Registro
 
@@ -47,20 +47,6 @@ def es_local(host):
 # --------------------------------------------------------------------------- #
 # descubrimiento
 # --------------------------------------------------------------------------- #
-
-def descubrir_instalaciones(raiz):
-    """Cada subdirectorio con un compose o con estado previo es una instalación."""
-    raiz = Path(raiz)
-    if not raiz.is_dir():
-        return []
-    salida = []
-    for d in sorted(raiz.iterdir()):
-        if not d.is_dir():
-            continue
-        if (d / "docker-compose.yml").is_file() or (d / ".deploycenter").is_dir():
-            salida.append(Instalacion(d))
-    return salida
-
 
 def paquetes_disponibles(dir_paquetes, producto=None):
     """Los paquetes que alguien dejó en el directorio. En Fase 2 los trae el hub."""

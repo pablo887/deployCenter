@@ -96,3 +96,16 @@ class TestRelease:
         texto = compose.render_desde_archivos(plantilla, m, entorno={})
         problemas = compose.problemas_del_compose(texto, manifiesto=m)
         assert problemas == [], f"{ruta_rel}:\n  " + "\n  ".join(problemas)
+
+    def test_la_huella_de_la_plantilla_coincide(self, raiz, ruta_rel):
+        """Sin huella, el agente conectado al hub no despliega el release: no tiene
+        cómo saber que la plantilla que recibe es la que publicó Accusys."""
+        producto, _ = ruta_rel.split("/")
+        datos = yaml.safe_load(
+            (raiz / "productos" / producto / "producto.yaml").read_text("utf-8"))
+        plantilla = raiz / "productos" / producto / datos.get(
+            "plantilla", "compose.plantilla.yaml")
+        m, _ = self._manifiesto(raiz, ruta_rel)
+        assert m.get("plantilla_sha256") == compose.huella(plantilla.read_bytes()), (
+            f"{ruta_rel}: la huella no coincide con la plantilla; "
+            f"corré 'dc sellar ... --escribir' y volvé a firmar")

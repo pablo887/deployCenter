@@ -9,7 +9,9 @@ El compose deja de editarse a mano. Se genera a partir de tres entradas:
 
 La plantilla usa Jinja con ``StrictUndefined``: si referencia algo que no está,
 falla al renderizar en vez de generar un compose incompleto que recién explota
-cuando el contenedor no levanta.
+cuando el contenedor no levanta. Corre en el sandbox de Jinja porque en Fase 2 la
+plantilla viaja desde el hub: aunque el agente comprueba su huella contra el
+manifiesto firmado, renderizarla no tiene por qué poder ejecutar código.
 
 Los secretos no se interpolan en el compose. La plantilla pasa el archivo de
 entorno con ``env_file`` y solo interpola lo que define la topología (puertos,
@@ -17,10 +19,12 @@ rutas de volumen). Así el compose generado se puede leer y versionar sin que
 lleve valores del cliente adentro.
 """
 
+import hashlib
 from pathlib import Path
 
 import yaml
-from jinja2 import Environment, StrictUndefined, TemplateError
+from jinja2 import StrictUndefined, TemplateError
+from jinja2.sandbox import SandboxedEnvironment
 
 from . import digests
 from .errores import ErrorArchivo, ErrorValidacion
@@ -28,8 +32,15 @@ from .errores import ErrorArchivo, ErrorValidacion
 REGISTRY_PROPIO = "registry.accusys.com.ar"
 
 
+def huella(contenido):
+    """SHA-256 de la plantilla, tal como la declara `plantilla_sha256` del manifiesto."""
+    if isinstance(contenido, str):
+        contenido = contenido.encode("utf-8")
+    return hashlib.sha256(contenido).hexdigest()
+
+
 def _entorno_jinja():
-    env = Environment(
+    env = SandboxedEnvironment(
         undefined=StrictUndefined,
         keep_trailing_newline=True,
         trim_blocks=True,

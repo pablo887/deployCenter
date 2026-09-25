@@ -1,4 +1,4 @@
-.PHONY: instalar test lint validar demo e2e ui limpiar
+.PHONY: instalar test lint validar demo e2e ui hub limpiar
 
 PY ?= python
 
@@ -38,3 +38,8 @@ e2e:
 # UI local contra un entorno de demo en /tmp. Ctrl-C para terminar.
 ui:
 	$(PY) -m deploycenter.agente.cli ui --raiz .demo/stacks --paquetes .demo/paquetes
+
+# Hub local contra un SQLite en .demo/. Ctrl-C para terminar.
+hub:
+	@mkdir -p .demo
+	DC_HUB_DB=sqlite:///.demo/hub.db $(PY) -m deploycenter.hub.cli servir

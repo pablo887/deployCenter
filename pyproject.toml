@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deploycenter"
-version = "0.1.0"
-description = "Toolchain de releases y despliegue para los productos del área (Fase 0)"
+version = "0.2.0"
+description = "Toolchain de releases, agente de despliegue y hub de deployCenter"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Propietario - Accusys Technology S.R.L." }
@@ -21,11 +21,21 @@ dependencies = [
 [project.optional-dependencies]
 # La UI local solo hace falta en el servidor del cliente, no en el pipeline.
 ui = ["Flask>=3.0", "waitress>=3.0"]
-dev = ["pytest>=8.0", "ruff>=0.5", "Flask>=3.0", "waitress>=3.0"]
+# El hub corre en la nube de Accusys, nunca en el servidor del cliente.
+hub = [
+    "fastapi>=0.110", "uvicorn>=0.29", "SQLAlchemy>=2.0",
+    "psycopg[binary]>=3.1", "PyJWT[crypto]>=2.8",
+]
+dev = [
+    "pytest>=8.0", "ruff>=0.5", "Flask>=3.0", "waitress>=3.0",
+    "fastapi>=0.110", "uvicorn>=0.29", "SQLAlchemy>=2.0", "httpx>=0.27",
+    "psycopg[binary]>=3.1", "PyJWT[crypto]>=2.8",
+]
 
 [project.scripts]
 dc = "deploycenter.cli:main"
 dc-agent = "deploycenter.agente.cli:main"
+dc-hub = "deploycenter.hub.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
