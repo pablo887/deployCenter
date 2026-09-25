@@ -286,6 +286,30 @@ que no pasa por ahí no llega a main.
 - [ ] Enrolamiento: el token propio del agente, que hoy no existe porque no hay
       hub contra el cual enrolarse
 
+## Maqueta del hub (`web/`)
+
+Maqueta navegable del hub web de las Fases 2 y 3, sin backend: HTML, CSS y JS
+estáticos con datos ficticios y estado en `localStorage`. Sirve como referencia
+de diseño y de circuito para construir el hub real.
+
+```bash
+cd web && python3 -m http.server 8080   # http://localhost:8080
+```
+
+Del lado del cliente muestra las instalaciones, el catálogo con la regla de
+habilitación, el despliegue (preflight, variables, doble aprobación,
+verificación y rollback con cuenta regresiva), el historial y los usuarios. Del
+lado de Accusys muestra el tablero de parque, la parametría comercial, la
+publicación de releases, los agentes y la auditoría. Desde el menú de usuario se
+cambia de rol.
+
+| Archivo | Contenido |
+| --- | --- |
+| `web/index.html` | Punto de entrada |
+| `web/styles.css` | Estilos y tokens (claro y oscuro), los mismos del documento |
+| `web/data.js` | Datos de ejemplo: productos, releases, clientes, instalaciones |
+| `web/app.js` | Vistas, reglas de habilitación y simulación del agente |
+
 ## Documentación
 
 `docs/arquitectura-deploy-center.html` — el documento de arquitectura completo:
