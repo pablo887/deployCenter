@@ -16,7 +16,7 @@
 
 La base sale de `--db` o de `DC_HUB_DB` (por defecto un SQLite local) y el
 catálogo de `--catalogo` o `DC_HUB_CATALOGO` (la raíz del repo, la que tiene
-`productos/`).
+`productos/`), más los que se sumen con `DC_HUB_CATALOGO_EXTRA`.
 
 La consola opera como el sistema, sin pasar por la RLS: es para Accusys, dentro
 de su perímetro. La web opera siempre con la identidad de la persona.
@@ -44,8 +44,17 @@ def _catalogo_por_defecto():
     return aqui
 
 
+def _catalogo(args):
+    """El catálogo del repo, más los extra de DC_HUB_CATALOGO_EXTRA (rutas separadas
+    por os.pathsep), por ejemplo el de la demo del agente."""
+    from .catalogo import Catalogo
+
+    extras = [e for e in os.environ.get("DC_HUB_CATALOGO_EXTRA", "").split(os.pathsep) if e]
+    return Catalogo(args.catalogo, extras=extras)
+
+
 def _hub(args):
-    return srv.Hub.desde_url(args.db, args.catalogo)
+    return srv.Hub.desde_url(args.db, _catalogo(args))
 
 
 def _imprimir(datos):
@@ -122,7 +131,7 @@ def cmd_migrar(args):
         aplicadas = migraciones.aplicar(api, _dir_migraciones(args))
         print("\n".join(aplicadas) if aplicadas else "todo al día")
         return OK
-    hub = srv.Hub(srv.conectar(args.db), args.catalogo)
+    hub = srv.Hub(srv.conectar(args.db), _catalogo(args))
     if hub.es_sqlite:
         hub.crear_tablas()
         print("SQLite: tablas creadas desde el modelo (sin RLS)")

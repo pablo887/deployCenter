@@ -15,6 +15,10 @@
 #
 # Contra la base de Supabase en vez de la local: sacá db-local de
 # COMPOSE_PROFILES y poné su cadena de conexión en DC_HUB_DB (ver .env.ejemplo).
+#
+# Perfil agente-demo: un agente en esta misma máquina y un producto de prueba
+# (nginx) para ver un despliegue real, la verificación y la vuelta atrás. Los
+# pasos están en ejemplos/demo-agente/README.md.
 
 name: deploycenter-hub
 
@@ -26,6 +30,7 @@ x-hub: &hub
   env_file: .env
   environment:
     DC_HUB_DB: ${DC_HUB_DB:-postgresql+psycopg://deploycenter:${DB_PASSWORD:-}@db:5432/deploycenter}
+    DC_HUB_CATALOGO_EXTRA: ${DC_HUB_CATALOGO_EXTRA:-}
 
 services:
   db:
@@ -64,5 +69,32 @@ services:
       migrar:
         condition: service_completed_successfully
 
+  # Solo con el perfil agente-demo. Usa el Docker de esta máquina (el socket) para
+  # levantar el stack de la demo, que queda publicado en http://localhost:18080.
+  agente:
+    profiles: ["agente-demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: deploycenter/agente:dev
+    restart: unless-stopped
+    entrypoint: ["sh", "/demo/agente.sh"]
+    environment:
+      DC_HUB_URL: http://hub:8000
+      DC_AGENTE_CODIGO: ${DC_AGENTE_CODIGO:-}
+      DC_AGENTE_HOST: ${DC_AGENTE_HOST:-demo-01}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agente-stacks:/stacks
+      - agente-trabajo:/var/lib/deploycenter
+      - ./ejemplos/demo-agente/agente.sh:/demo/agente.sh:ro
+    depends_on:
+      hub:
+        condition: service_healthy
+
 volumes:
   db:
+  agente-stacks:
+  agente-trabajo:

@@ -93,7 +93,7 @@ supabase/migrations/         esquema del hub, RLS y hook de identidad
 web/                         la web del hub (conectada, o maqueta si se abre sola)
 Dockerfile.hub               imagen del hub (API + web); Dockerfile es la del agente
 docker-compose.yml           hub + Postgres para desarrollo (ver .env.ejemplo)
-ejemplos/                    cliente ficticio y composes de referencia del agente
+ejemplos/                    cliente ficticio, composes del agente y la demo del agente
 registry/                    el registry privado: decisiones y compose de dev
 ```
 
@@ -402,7 +402,12 @@ docker compose exec hub dc-hub usuario <uuid> --rol comercial --email vos@accusy
 ```
 
 Desde ahí, Comercial crea los clientes, sus productos y sus usuarios desde la
-web; Soporte emite los códigos para enrolar agentes. Para usar la base de
+web; Soporte emite los códigos para enrolar agentes.
+
+Para ver un despliegue real sin salir de tu máquina, el perfil `agente-demo`
+suma un agente y un producto de prueba (nginx, con un release roto a propósito
+para ver la vuelta atrás): pasos en
+[`ejemplos/demo-agente/README.md`](ejemplos/demo-agente/README.md). Para usar la base de
 Supabase en vez de la local, `.env.ejemplo` explica qué cambiar. La imagen del
 hub es `Dockerfile.hub` (la del agente sigue siendo `Dockerfile`).
 

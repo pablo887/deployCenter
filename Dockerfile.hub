@@ -20,6 +20,8 @@ RUN python -m pip install --no-cache-dir ".[hub]"
 COPY productos ./productos
 COPY supabase ./supabase
 COPY web ./web
+# el catálogo de la demo del agente: el hub lo ofrece solo con DC_HUB_CATALOGO_EXTRA
+COPY ejemplos/demo-agente/catalogo ./ejemplos/demo-agente/catalogo
 
 RUN useradd --system --uid 10001 --no-create-home hub
 USER hub

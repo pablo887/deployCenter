@@ -1,0 +1,20 @@
+# Producto de demostración para probar el agente de punta a punta en una
+# máquina con Docker, sin el registry de Accusys: imágenes públicas de nginx,
+# pinneadas por digest.
+#
+# No es parte del catálogo real: el hub lo ofrece solo si se agrega esta
+# carpeta con DC_HUB_CATALOGO_EXTRA (ver docker-compose.yml, perfil agente-demo).
+
+codigo: demo
+nombre: Demo
+descripcion: nginx de prueba para ver un despliegue real
+registry: docker.io/library
+plantilla: compose.plantilla.yaml
+
+servicios:
+  web:
+    descripcion: nginx que muestra la versión desplegada
+    healthcheck:
+      url: http://host.docker.internal:18080/
+      espera: 200
+      timeout_s: 60
