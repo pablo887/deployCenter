@@ -906,55 +906,74 @@
   function vParametria() {
     const u = usuarioActual();
     const edita = u.rol === 'comercial';
-    if (!S.tenants.length) return `<div class="cabecera"><div class="t"><span class="eyebrow">Parametría comercial</span><h1>Todavía no hay clientes</h1></div>${edita ? `<button class="btn btn-pri" data-a="nuevo-cliente">${I.plus} Nuevo cliente</button>` : ''}</div>`;
+    const hub = MODO === 'hub';
+    const nuevoCliente = hub && edita ? `<button class="btn btn-pri" data-a="nuevo-cliente">${I.plus} Nuevo cliente</button>` : '';
+    if (!S.tenants.length) return `<div class="cabecera"><div class="t"><span class="eyebrow">Parametría comercial</span><h1>Todavía no hay clientes</h1></div>${nuevoCliente}</div>`;
     if (!tenant(UI.tenantParam)) UI.tenantParam = S.tenants[0].id;
     const t = tenant(UI.tenantParam);
     const dis = edita ? '' : 'disabled';
-    // lo que el hub todavía no guarda se ve, pero no se edita
-    const disHub = MODO === 'hub' ? 'disabled title="Todavía no se guarda en el hub"' : dis;
-    const lista = S.tenants.map(x => `<button class="${x.id === t.id ? 'activo' : ''}" data-a="param-t" data-id="${x.id}"><span><b>${esc(x.nombre)}</b><small>${x.productos.map(p => prod(p.producto).nombre).join(' · ')}</small></span>${x.estado === 'suspendido' ? '<span class="pill p-crit sin-punto">Susp.</span>' : ''}</button>`).join('');
+    const lista = S.tenants.map(x => `<button class="${x.id === t.id ? 'activo' : ''}" data-a="param-t" data-id="${x.id}"><span><b>${esc(x.nombre)}</b><small>${x.productos.map(p => prod(p.producto).nombre).join(' · ') || 'sin productos'}</small></span>${x.estado === 'suspendido' ? '<span class="pill p-crit sin-punto">Susp.</span>' : ''}</button>`).join('');
     const noTiene = S.productos.filter(p => !tp(t.id, p.id));
+    // en el hub, lo que todavía no se guarda (ambientes, doble aprobación, avisos) no se muestra
     const prods = t.productos.map(p => {
       const m = mant(p);
-      return `<div class="prod-param">
+      return `<div class="prod-param${hub ? ' tres' : ''}">
         <div class="cab"><span class="tag-prod">${prod(p.producto).codigo}</span><h3>${prod(p.producto).nombre}</h3><span class="pill ${m.pill}">${m.txt}</span></div>
-        <div class="campo"><label for="mh-${p.producto}">Mantenimiento hasta</label><input type="date" id="mh-${p.producto}" data-f="param" data-p="${p.producto}" data-k="mantenimientoHasta" value="${p.mantenimientoHasta}" ${dis}></div>
+        <div class="campo"><label for="mh-${p.producto}">Mantenimiento hasta</label><input type="date" id="mh-${p.producto}" data-f="param" data-p="${p.producto}" data-k="mantenimientoHasta" value="${p.mantenimientoHasta || ''}" ${dis}></div>
         <div class="campo"><label for="cn-${p.producto}">Canal</label><select id="cn-${p.producto}" data-f="param" data-p="${p.producto}" data-k="canal" ${dis}><option value="estable" ${p.canal === 'estable' ? 'selected' : ''}>Estable</option><option value="anticipado" ${p.canal === 'anticipado' ? 'selected' : ''}>Anticipado</option></select></div>
-        <div class="campo"><span class="lbl">Ambientes</span><div class="fila">${['produccion', 'homologacion'].map(a => `<label class="check"><input type="checkbox" data-f="param-amb" data-p="${p.producto}" value="${a}" ${p.ambientes.includes(a) ? 'checked' : ''} ${disHub}> ${amb(a)}</label>`).join('')}</div></div>
+        ${hub ? '' : `<div class="campo"><span class="lbl">Ambientes</span><div class="fila">${['produccion', 'homologacion'].map(a => `<label class="check"><input type="checkbox" data-f="param-amb" data-p="${p.producto}" value="${a}" ${p.ambientes.includes(a) ? 'checked' : ''} ${dis}> ${amb(a)}</label>`).join('')}</div></div>`}
         <div class="campo"><span class="lbl">Autoservicio</span><label class="switch"><input type="checkbox" data-f="param" data-p="${p.producto}" data-k="autoservicio" ${p.autoservicio ? 'checked' : ''} ${dis}> ${p.autoservicio ? 'Habilitado' : 'Lo despliega Accusys'}</label></div>
       </div>`;
-    }).join('');
+    }).join('') || '<div class="vacio">Todavía no tiene productos adquiridos.</div>';
+
+    const us = S.usuarios.filter(x => x.tenant === t.id);
+    const usuarios = `<section class="panel">
+        <div class="panel-cab"><div><h2>Usuarios</h2><p>${us.length ? `${us.length} con acceso a ${esc(t.nombre)}` : 'Nadie tiene acceso todavía'}</p></div>
+          ${hub && edita ? `<button class="btn btn-sec btn-chico" data-a="alta-usuario-tenant">${I.plus} Alta de usuario</button>` : ''}</div>
+        ${us.length ? `<div class="tabla-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th></tr></thead><tbody>${us.map(x => `<tr>
+          <td><b>${esc(x.nombre)}</b><span class="sub">${esc(x.email)}</span></td>
+          <td>${hub && edita ? `<select data-f="rol-usuario" data-id="${x.id}" aria-label="Rol de ${esc(x.nombre)}" style="width:auto">${['lector', 'operador', 'aprobador'].map(r => `<option value="${r}" ${x.rol === r ? 'selected' : ''}>${ROLES[r].nombre}</option>`).join('')}</select>` : `<span class="pill p-info sin-punto">${ROLES[x.rol].nombre}</span>`}</td></tr>`).join('')}</tbody></table></div>`
+          : `<div class="vacio">Dale de alta al Aprobador del cliente: después él administra al resto.</div>`}
+      </section>`;
+
+    const ags = S.agentes.filter(a => a.tenant === t.id);
+    const est = { online: '<span class="pill p-ok">En línea</span>', offline: '<span class="pill p-crit">Fuera de línea</span>', revocado: '<span class="pill p-neutro">Revocado</span>', pendiente: '<span class="pill p-warn">Esperando canje</span>' };
+    const parque = `<section class="panel">
+        <div class="panel-cab"><h3>Servidores</h3><span class="suave chico">${instsDe(t.id).length === 1 ? '1 instalación' : instsDe(t.id).length + ' instalaciones'}</span></div>
+        ${ags.length ? `<div class="lista-agentes">${ags.map(a => `<div><span><code>${esc(a.host)}</code><small>${S.instalaciones.filter(i => i.agente === a.id).map(i => prod(i.producto).codigo).join(' · ') || 'sin stacks'} · ${esc(a.visto)}</small></span>${est[a.estado] || ''}</div>`).join('')}</div>`
+          : '<div class="vacio chico">Sin agentes enrolados. Los enrola Soporte con un código de un solo uso.</div>'}
+      </section>`;
+    const registry = `<section class="panel panel-cuerpo pila">
+        <h3>Credencial del registry</h3>
+        <div class="cmd">robot$${t.id}-pull  (solo lectura)\n${t.productos.map(p => `  ✓ registry.accusys.com.ar/${p.producto}/*`).join('\n')}${noTiene.length ? '\n' + noTiene.map(p => `  ✕ registry.accusys.com.ar/${p.id}/*`).join('\n') : ''}</div>
+        <span class="suave chico">Aunque alguien saltee la web, no descarga lo que no compró.</span>
+      </section>`;
+    const avisos = hub ? '' : `<section class="panel panel-cuerpo pila">
+        <h3>Destinatarios de aviso</h3>
+        <textarea rows="3" data-f="tenant" data-k="avisos" aria-label="Destinatarios de aviso" ${dis}>${esc(t.avisos.join('\n'))}</textarea>
+        <span class="suave chico">Reciben versión nueva, inicio, fallo, rollback y vencimientos.</span>
+      </section>`;
+
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Parametría comercial</span><h1>Qué compró cada cliente, y hasta cuándo</h1>
-      <p>Gobierna lo que la plataforma habilita. Se aplica en la web y también en el registry: la credencial de cada cliente alcanza solo los repos de sus productos.</p></div></div>
-      ${edita ? '' : `<div class="aviso a-info">${I.info}<div>Estás como <b>${ROLES[u.rol].nombre}</b>: la parametría la edita el rol Comercial.${MODO === 'hub' ? '' : ' Cambiá de usuario arriba a la derecha para probarlo.'}</div></div>`}
-      <div class="dos-col">
+      <p>Gobierna lo que la plataforma habilita, en la web y en el registry.</p></div>${nuevoCliente}</div>
+      ${edita ? '' : `<div class="aviso a-info">${I.info}<div>Estás como <b>${ROLES[u.rol].nombre}</b>: la parametría la edita el rol Comercial.${hub ? '' : ' Cambiá de usuario arriba a la derecha para probarlo.'}</div></div>`}
+      <div class="param-cols">
         <section class="panel"><div class="lista-t">${lista}</div></section>
         <div class="pila">
           <section class="panel">
-            <div class="panel-cab"><div><h2>${esc(t.nombre)}</h2><p>Tenant <code>${t.id}</code> · ${instsDe(t.id).length} instalaciones</p></div>
+            <div class="panel-cab"><div><h2>${esc(t.nombre)}</h2><p>Tenant <code>${esc(t.id)}</code></p></div>
               <div class="fila">
-                ${MODO === 'hub' && edita ? `<button class="btn btn-sec btn-chico" data-a="alta-usuario-tenant">${I.plus} Alta de usuario</button><button class="btn btn-sec btn-chico" data-a="nuevo-cliente">${I.plus} Nuevo cliente</button>` : ''}
-                <label class="switch"><input type="checkbox" data-f="tenant" data-k="dobleAprobacion" ${t.dobleAprobacion ? 'checked' : ''} ${disHub}> Doble aprobación</label>
+                ${hub ? '' : `<label class="switch"><input type="checkbox" data-f="tenant" data-k="dobleAprobacion" ${t.dobleAprobacion ? 'checked' : ''} ${dis}> Doble aprobación</label>`}
                 <select data-f="tenant" data-k="estado" aria-label="Estado del cliente" style="width:auto" ${dis}><option value="activo" ${t.estado === 'activo' ? 'selected' : ''}>Activo</option><option value="suspendido" ${t.estado === 'suspendido' ? 'selected' : ''}>Suspendido</option></select>
               </div>
             </div>
             ${prods}
             ${edita && noTiene.length ? `<div class="panel-cuerpo fila" style="border-top:1px solid var(--linea)"><select id="nuevo-prod" style="width:auto" aria-label="Producto a agregar">${noTiene.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('')}</select><button class="btn btn-sec btn-chico" data-a="agregar-prod">${I.plus} Agregar producto adquirido</button></div>` : ''}
           </section>
-          <div class="grid g2">
-            <section class="panel panel-cuerpo pila">
-              <h3>Destinatarios de aviso</h3>
-              <textarea rows="3" data-f="tenant" data-k="avisos" aria-label="Destinatarios de aviso" ${disHub}>${esc(t.avisos.join('\n'))}</textarea>
-              <span class="suave chico">Reciben versión nueva, inicio, fallo, rollback y vencimientos.</span>
-            </section>
-            <section class="panel panel-cuerpo pila">
-              <h3>Credencial del registry</h3>
-              <div class="cmd">robot$${t.id}-pull  (solo lectura)\n${t.productos.map(p => `  ✓ registry.accusys.com.ar/${p.producto}/*`).join('\n')}\n${noTiene.map(p => `  ✕ registry.accusys.com.ar/${p.id}/*`).join('\n')}</div>
-              <span class="suave chico">Se recalcula al guardar. Aunque alguien saltee la web, no descarga lo que no compró.</span>
-            </section>
-          </div>
+          ${hub ? usuarios : ''}
         </div>
+        <div class="pila param-lado">${parque}${registry}${avisos}</div>
       </div>`;
   }
 

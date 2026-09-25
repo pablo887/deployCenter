@@ -135,7 +135,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .usuario .quien b{font-size:.84rem;font-weight:600}
 .usuario .quien small{font-size:.7rem;color:var(--gris)}
 
-.contenido{padding:28px 28px 80px;max-width:1240px;width:100%;display:flex;flex-direction:column;gap:22px}
+.contenido{padding:28px 28px 80px;max-width:1640px;width:100%;display:flex;flex-direction:column;gap:22px}
 .cabecera{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .cabecera .t{display:flex;flex-direction:column;gap:6px;min-width:0}
 .eyebrow{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--azul);font-weight:700}
@@ -332,6 +332,20 @@ textarea{font-family:var(--mono);font-size:.8rem;line-height:1.55;resize:vertica
 .lista-t small{color:var(--gris);font-size:.76rem}
 .prod-param{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:16px 20px;border-bottom:1px solid var(--linea);align-items:end}
 .prod-param:last-child{border-bottom:0}
+.prod-param.tres{grid-template-columns:repeat(3,minmax(0,1fr))}
+/* parametría: clientes · el cliente elegido · su parque y credencial */
+.param-cols{display:grid;grid-template-columns:260px minmax(0,1fr) minmax(280px,340px);gap:18px;align-items:start}
+.lista-agentes{display:flex;flex-direction:column}
+.lista-agentes>div{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 20px;border-top:1px solid var(--linea)}
+.lista-agentes>div:first-child{border-top:0}
+.lista-agentes span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.lista-agentes code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lista-agentes small{color:var(--gris);font-size:.76rem}
+.lista-agentes .pill{white-space:nowrap;flex:none}
+@media (max-width: 1400px){
+  .param-cols{grid-template-columns:240px minmax(0,1fr)}
+  .param-cols>.param-lado{grid-column:2}
+}
 .prod-param .cab{grid-column:1/-1;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 
 /* ---------- drawer / modal / toast ---------- */
@@ -365,7 +379,7 @@ textarea{font-family:var(--mono);font-size:.8rem;line-height:1.55;resize:vertica
 @media (max-width: 1080px){
   .g4{grid-template-columns:repeat(2,minmax(0,1fr))}
   .g3{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .prod-param{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .prod-param,.prod-param.tres{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width: 880px){
   .login{grid-template-columns:1fr}
@@ -378,7 +392,8 @@ textarea{font-family:var(--mono);font-size:.8rem;line-height:1.55;resize:vertica
   .top{padding:10px 16px}
   .usuario .quien{display:none}
   .contenido{padding:20px 16px 60px}
-  .g2,.g3,.dos-col{grid-template-columns:1fr}
+  .g2,.g3,.dos-col,.param-cols{grid-template-columns:1fr}
+  .param-cols>.param-lado{grid-column:auto}
   .release{grid-template-columns:1fr;gap:10px}
   .release .acciones{align-items:flex-start;min-width:0}
   .release .motivo{text-align:left}
