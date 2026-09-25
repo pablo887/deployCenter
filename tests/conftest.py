@@ -220,3 +220,93 @@ def instalacion_nueva(tmp_path):
     d.mkdir(parents=True)
     (d / ".env").write_text("MEP_PUERTO_WEB=8443\n", encoding="utf-8")
     return Instalacion(d).preparar()
+
+
+# --------------------------------------------------------------------------- #
+# Fase 2: hub y canal con el agente
+# --------------------------------------------------------------------------- #
+
+FIRMA_VALIDA = b"firma-de-prueba"
+
+
+class RelojHub:
+    """Reloj del hub que se puede adelantar a mano."""
+
+    def __init__(self):
+        import datetime
+        self.t = datetime.datetime(2026, 9, 25, 15, 0, 0)
+
+    def __call__(self):
+        return self.t
+
+    def avanzar(self, segundos):
+        import datetime
+        self.t += datetime.timedelta(seconds=segundos)
+
+
+@pytest.fixture
+def catalogo(tmp_path, base):
+    """Árbol productos/ con MEP 4.7.0 firmado y sellado, como lo publica Accusys."""
+    from deploycenter import compose as compose_mod
+
+    raiz = tmp_path / "catalogo"
+    prod = raiz / "productos" / "mep"
+    rel = prod / "releases" / "4.7.0"
+    rel.mkdir(parents=True)
+    (prod / "producto.yaml").write_text(
+        "codigo: mep\nnombre: MEP\nregistry: registry.accusys.com.ar/mep\n"
+        "plantilla: compose.plantilla.yaml\n", encoding="utf-8")
+    (prod / "compose.plantilla.yaml").write_text(PLANTILLA_AGENTE, encoding="utf-8")
+    m = dict(base, plantilla_sha256=compose_mod.huella(PLANTILLA_AGENTE))
+    (rel / "manifiesto.json").write_text(json.dumps(m), encoding="utf-8")
+    (rel / "manifiesto.json.sig").write_bytes(FIRMA_VALIDA)
+    (rel / "changelog.md").write_text("# MEP 4.7.0\n", encoding="utf-8")
+    return raiz
+
+
+@pytest.fixture
+def agregar_release(catalogo, base):
+    """Publica otro release de MEP en el catálogo de prueba."""
+    from deploycenter import compose as compose_mod
+
+    def _hacer(version, **campos):
+        rel = catalogo / "productos" / "mep" / "releases" / version
+        rel.mkdir(parents=True)
+        m = dict(base, release=version, plantilla_sha256=compose_mod.huella(PLANTILLA_AGENTE),
+                 changelog=f"productos/mep/releases/{version}/changelog.md")
+        m.update(campos)
+        (rel / "manifiesto.json").write_text(json.dumps(m), encoding="utf-8")
+        (rel / "manifiesto.json.sig").write_bytes(FIRMA_VALIDA)
+        (rel / "changelog.md").write_text(f"# MEP {version}\n", encoding="utf-8")
+        return m
+    return _hacer
+
+
+@pytest.fixture
+def reloj_hub():
+    return RelojHub()
+
+
+@pytest.fixture
+def hub(tmp_path, catalogo, reloj_hub):
+    """Hub con Banco Andino dado de alta y MEP adquirido hasta fin de año."""
+    from deploycenter.hub.servicio import Hub
+
+    h = Hub.desde_url(f"sqlite:///{tmp_path / 'hub.db'}", catalogo, reloj=reloj_hub)
+    h.crear_tenant("andino", "Banco Andino")
+    h.adquirir("andino", "mep", "2026-12-31")
+    return h
+
+
+@pytest.fixture
+def firma_falsa(monkeypatch):
+    """cosign no está en el entorno de tests: la firma es válida si es FIRMA_VALIDA."""
+    from pathlib import Path as _Path
+
+    from deploycenter import firma as firma_mod
+
+    def verificar(_manifiesto, _clave, ruta_firma, **_kw):
+        return _Path(ruta_firma).read_bytes() == FIRMA_VALIDA
+
+    monkeypatch.setattr(firma_mod, "verificar", verificar)
+    return verificar

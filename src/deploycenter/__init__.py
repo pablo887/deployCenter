@@ -5,7 +5,7 @@ imágenes se pinnean por digest y el docker-compose.yml se genera desde una
 plantilla versionada en vez de editarse a mano.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from . import compose, digests, firma, manifiesto, variables, versiones  # noqa: F401
 

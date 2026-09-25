@@ -1,11 +1,13 @@
-# deployCenter — Fases 0 y 1
+# deployCenter — Fases 0, 1 y el canal de la Fase 2
 
-Toolchain de releases y agente de despliegue para los productos del área: MEP,
-Factnova, Pases & CRyL, Repi, SML y CEDIN.
+Toolchain de releases, agente de despliegue y hub para los productos del área:
+MEP, Factnova, Pases & CRyL, Repi, SML y CEDIN.
 
 **Fase 0** convierte el release en algo ejecutable. **Fase 1** agrega el agente
 que lo aplica en el servidor del cliente, lo verifica y lo revierte si falla.
-Todavía no hay hub web: el despliegue lo dispara el CLI del agente.
+**Fase 2** empieza por el canal entre el hub y el agente: el hub encola la
+orden y el agente sale a buscarla. Todavía no hay web ni login de usuarios: el
+hub se opera por su API y por `dc-hub`.
 
 | | Antes | Ahora |
 |---|---|---|
@@ -58,6 +60,9 @@ dc render --producto mep --release 4.7.0 --entorno /ruta/.env --salida docker-co
 
 # esqueleto de un release nuevo
 dc nuevo-release --producto mep --version 4.7.1 --desde '>=4.5.0'
+
+# sellar la plantilla dentro del manifiesto, antes de firmar
+dc sellar    productos/mep/releases/4.7.0/manifiesto.json --escribir
 
 # firmar y verificar
 dc firmar    productos/mep/releases/4.7.0/manifiesto.json --clave cosign.key
@@ -283,32 +288,21 @@ que no pasa por ahí no llega a main.
 - [ ] Correr `ejemplos/e2e-agente.sh` con el engine de Docker levantado: el
       despliegue real todavía no se ejercitó de punta a punta
 - [ ] Auto-update del agente, que nunca debe ocurrir durante un despliegue
-- [ ] Enrolamiento: el token propio del agente, que hoy no existe porque no hay
-      hub contra el cual enrolarse
 
-## Maqueta del hub (`web/`)
+### Fase 2
 
-Maqueta navegable del hub web de las Fases 2 y 3, sin backend: HTML, CSS y JS
-estáticos con datos ficticios y estado en `localStorage`. Sirve como referencia
-de diseño y de circuito para construir el hub real.
-
-```bash
-cd web && python3 -m http.server 8080   # http://localhost:8080
-```
-
-Del lado del cliente muestra las instalaciones, el catálogo con la regla de
-habilitación, el despliegue (preflight, variables, doble aprobación,
-verificación y rollback con cuenta regresiva), el historial y los usuarios. Del
-lado de Accusys muestra el tablero de parque, la parametría comercial, la
-publicación de releases, los agentes y la auditoría. Desde el menú de usuario se
-cambia de rol.
-
-| Archivo | Contenido |
-| --- | --- |
-| `web/index.html` | Punto de entrada |
-| `web/styles.css` | Estilos y tokens (claro y oscuro), los mismos del documento |
-| `web/data.js` | Datos de ejemplo: productos, releases, clientes, instalaciones |
-| `web/app.js` | Vistas, reglas de habilitación y simulación del agente |
+- [x] Canal hub–agente: enrolamiento, latido, órdenes con long-poll, eventos,
+      resultado, cancelación del rollback desde el hub y buzón ante cortes
+- [ ] Identidad con Supabase Auth y RLS por tenant. Hoy la API de la web usa un
+      token de administración provisorio y el hub lee con su propia credencial.
+- [ ] Migraciones versionadas de la base, en lugar de `create_all`
+- [ ] Variables nuevas desde la web: el formulario tiene que escribir en el
+      `.env` del servidor sin que el valor pase por el hub. Hoy se completan
+      solas si tienen default; las que no tienen, se cargan en el servidor.
+- [ ] Órdenes entregadas sin respuesta: si el agente muere después de tomar
+      una orden, queda `entregada`. Falta marcarla vencida pasado un plazo.
+- [ ] Imagen del hub y su despliegue en la nube de Accusys
+- [ ] Frontend real a partir de la maqueta de `web/`
 
 ## Documentación
 

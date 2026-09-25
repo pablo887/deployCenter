@@ -33,5 +33,6 @@
       "timeout_s": 60
     }
   ],
-  "changelog": "productos/mep/releases/4.7.0/changelog.md"
+  "changelog": "productos/mep/releases/4.7.0/changelog.md",
+  "plantilla_sha256": "857239c77073a5a9c390760fa9ccbe9a45dd231054e7f805a4b2904d4abacd45"
 }
