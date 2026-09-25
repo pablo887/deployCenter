@@ -102,7 +102,7 @@
     if (verificado) return { paso: 'totp', factorId: verificado.id };
     // un enrolamiento que quedó a medias estorba (el nombre del factor es único)
     for (const f of factores) { try { await auth('DELETE', `/factors/${f.id}`, null, sesion.access_token); } catch (e) { /* sigue */ } }
-    const f = await auth('POST', '/factors', { factor_type: 'totp', friendly_name: 'deployCenter ' + new Date().toISOString().slice(0, 16) }, sesion.access_token);
+    const f = await auth('POST', '/factors', { factor_type: 'totp', friendly_name: 'deployHub ' + new Date().toISOString().slice(0, 16) }, sesion.access_token);
     return { paso: 'enrolar', factorId: f.id, qr: qrComoDataUri(f.totp && f.totp.qr_code), secreto: f.totp && f.totp.secret };
   }
 

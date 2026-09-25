@@ -78,19 +78,15 @@ button,input,select,textarea{font:inherit;color:inherit}
   border-left:1px solid currentColor;padding-left:10px;line-height:1.35;opacity:.6}
 
 /* ---------- login ---------- */
-.login{min-height:100%;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);background:var(--paper)}
+.login{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);background:var(--paper)}
 .login-hero{background:linear-gradient(125deg,var(--navy-deep) 0%,#0A1F44 50%,#123A8F 100%);color:#fff;
   padding:44px 48px;display:flex;flex-direction:column;justify-content:space-between;gap:40px;position:relative;overflow:hidden}
 .login-hero::after{content:"";position:absolute;right:-120px;top:-140px;width:460px;height:460px;border-radius:50%;
   background:radial-gradient(circle,rgba(43,139,245,.32),transparent 62%)}
 .login-hero .marca{color:#fff}
-.login-hero h1{font-size:clamp(1.7rem,3.2vw,2.4rem);max-width:18ch;position:relative}
+.login-hero h1{font-size:clamp(1.9rem,3.6vw,2.8rem);max-width:14ch;position:relative;margin:auto 0}
 .login-hero h1 span{color:#5AA6FF}
 .login-hero p{color:rgba(255,255,255,.78);max-width:52ch;position:relative;margin-top:14px}
-.flujo{display:flex;flex-wrap:wrap;gap:8px;position:relative;font-size:.8rem}
-.flujo span{padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#DCE7FA}
-.flujo b{color:#5AA6FF;font-weight:500;align-self:center}
-.dominios{position:relative;font-family:var(--mono);font-size:.76rem;color:rgba(255,255,255,.6);display:grid;gap:3px}
 .login-form{padding:44px 48px;display:flex;flex-direction:column;justify-content:center;gap:26px;max-width:560px;width:100%;margin:0 auto}
 .login-form .logo-accusys{height:26px;width:auto;align-self:flex-start;background:var(--logo-bg);padding:var(--logo-pad,0);border-radius:6px}
 :root[data-theme="dark"] .login-form .logo-accusys{--logo-pad:4px 8px}

@@ -213,7 +213,7 @@
       `<a href="#${k}" class="${k === v || (v === 'instalacion' && k === 'instalaciones') || (v === 'desplegar' && k === 'catalogo') ? 'activo' : ''}">${x.icono}<span>${x.titulo}</span>${x.cuenta ? `<span class="cuenta">${x.cuenta()}</span>` : ''}</a>`).join('');
     return `
       <aside class="side">
-        <div class="marca"><span class="m">D</span><span class="n">deploy<i>Center</i></span></div>
+        <div class="marca"><span class="m">D</span><span class="n">deploy<i>Hub</i></span></div>
         <nav class="nav" aria-label="Principal">
           <div class="nav-titulo">${esAccusys() ? 'Accusys · interno' : 'Mi organización'}</div>
           ${items}
@@ -307,19 +307,8 @@
   function heroLogin() {
     return `
         <section class="login-hero">
-          <div class="marca"><span class="m">D</span><span class="n">deploy<i>Center</i></span><span class="sub">CENTRO DE<br>RELEASES</span></div>
-          <div>
-            <h1>Releases y despliegue <span>autoservicio</span> para toda la línea</h1>
-            <p>MEP, Factnova, Pases &amp; CRyL, Repi, SML y CEDIN. Cada cliente ve lo que compró, corre el preflight en horario laboral y despliega con un click. Si la verificación falla, la plataforma vuelve atrás sola y avisa a las dos partes.</p>
-          </div>
-          <div class="flujo">
-            <span>Accusys publica</span><b>→</b><span>Aviso</span><b>→</b><span>Preflight</span><b>→</b><span>Despliegue</span><b>→</b><span>Verificación</span><b>→</b><span>OK / Rollback</span>
-          </div>
-          <div class="dominios">
-            <span>443/TCP saliente · deploy.accusys.com.ar</span>
-            <span>443/TCP saliente · auth.accusys.com.ar</span>
-            <span>443/TCP saliente · registry.accusys.com.ar</span>
-          </div>
+          <div class="marca"><span class="m">D</span><span class="n">deploy<i>Hub</i></span><span class="sub">CENTRO DE<br>RELEASES</span></div>
+          <h1>Releases y despliegue <span>autoservicio</span></h1>
         </section>`;
   }
 
@@ -1179,7 +1168,7 @@
     if (!cfg.identidad) {
       form = `<div class="aviso a-crit">${I.alert}<div><b>El hub no tiene configurada la identidad.</b> ${esc(cfg.motivo || 'Definí SUPABASE_URL y SUPABASE_PUBLISHABLE_KEY (o DC_JWT_SECRET para desarrollo) y reiniciá el hub.')}</div></div>`;
     } else if (L.paso === 'sin-alta') {
-      titulo = 'Falta tu alta'; sub = 'Ingresaste bien, pero tu usuario no tiene rol en deployCenter.';
+      titulo = 'Falta tu alta'; sub = 'Ingresaste bien, pero tu usuario no tiene rol en deployHub.';
       form = `<div class="aviso a-warn">${I.users}<div>Pedile el alta al Aprobador de tu organización (o a Accusys) con este id:</div></div>
         <div class="cmd">${esc(L.id || '')}</div>${L.email ? `<p class="suave chico">Usuario: ${esc(L.email)}</p>` : ''}
         <div class="fila"><button class="btn btn-sec" data-a="logout">${I.logout} Salir</button><button class="btn btn-pri" data-a="recargar">Ya tengo el alta</button></div>`;
@@ -1196,7 +1185,7 @@
         <div class="campo"><span class="lbl">Código de verificación</span>${digitos}</div>
         <div class="fila"><button class="btn btn-pri" data-a="hub-verificar" ${ocupado}>Verificar y entrar</button><button class="btn btn-fantasma" data-a="logout">Cancelar</button></div></div>`;
     } else if (L.paso === 'totp') {
-      form = `<div class="pila"><div class="campo"><span class="lbl">Código de verificación (TOTP)</span>${digitos}<span class="ayuda">El de tu app de autenticación para deployCenter.</span></div>
+      form = `<div class="pila"><div class="campo"><span class="lbl">Código de verificación (TOTP)</span>${digitos}<span class="ayuda">El de tu app de autenticación para deployHub.</span></div>
         <div class="fila"><button class="btn btn-pri" data-a="hub-verificar" ${ocupado}>Verificar y entrar</button><button class="btn btn-fantasma" data-a="logout">Usar otra cuenta</button></div></div>`;
     } else {
       form = `<div class="pila">
@@ -1689,7 +1678,7 @@
     if (!cfg) { render(); return; }   // sin hub: la maqueta
     MODO = 'hub';
     S = vacio(); DEP = null;
-    document.title = 'deployCenter';
+    document.title = 'deployHub';
     window.addEventListener('dc-sesion-vencida', () => { if (S.sesion) { S = vacio(); DEPH = null; UI.loginHub = { paso: 'credenciales', error: 'La sesión venció: volvé a ingresar.' }; render(); } });
     // el parque cambia solo (latidos, órdenes de otros): se refresca sin molestar
     setInterval(() => {
