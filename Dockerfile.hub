@@ -1,0 +1,33 @@
+# Imagen del hub: la API, la web y el catálogo publicado, en un solo proceso.
+#
+# Corre en la nube de Accusys, nunca en el servidor de un cliente (ahí va el
+# agente, con el Dockerfile de al lado). No necesita Docker ni el socket: el hub
+# solo encola órdenes y guarda lo que le reportan los agentes.
+#
+#   docker build -f Dockerfile.hub -t registry.accusys.com.ar/deploycenter/hub:0.2.0 .
+#
+# Para levantarlo con una base local, ver docker-compose.yml.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN python -m pip install --no-cache-dir ".[hub]"
+
+# Lo que el hub sirve y ofrece: el catálogo es el mismo árbol que valida el
+# pipeline, así que la imagen de cada versión trae los releases de esa versión.
+COPY productos ./productos
+COPY supabase ./supabase
+COPY web ./web
+
+RUN useradd --system --uid 10001 --no-create-home hub
+USER hub
+
+ENV DC_HUB_CATALOGO=/app PYTHONUNBUFFERED=1
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/salud', timeout=3)"]
+
+ENTRYPOINT ["dc-hub"]
+CMD ["servir", "--host", "0.0.0.0", "--puerto", "8000"]

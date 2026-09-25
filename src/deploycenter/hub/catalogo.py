@@ -27,6 +27,29 @@ class Catalogo:
             raise ErrorArchivo(f"código de producto inválido: {producto!r}")
         return self.raiz / "productos" / producto
 
+    def productos(self):
+        """Los códigos de producto con `producto.yaml`, en orden."""
+        carpeta = self.raiz / "productos"
+        if not carpeta.is_dir():
+            return []
+        return sorted(d.name for d in carpeta.iterdir()
+                      if (d / "producto.yaml").is_file() and not d.name.startswith("."))
+
+    def novedades(self, producto, version):
+        """Los ítems del changelog (las líneas de lista), para mostrar en la web."""
+        manifiesto = self.release(producto, version)
+        ruta = self.raiz / (manifiesto or {}).get("changelog", "")
+        if not manifiesto or not ruta.is_file() or not ruta.resolve().is_relative_to(
+                self.raiz.resolve()):
+            return []
+        items = []
+        for linea in ruta.read_text(encoding="utf-8").splitlines():
+            if linea.startswith(("- ", "* ")):
+                items.append(linea[2:].strip())
+            elif items and linea.startswith("  ") and linea.strip():
+                items[-1] += " " + linea.strip()
+        return items
+
     def datos_producto(self, producto):
         ruta = self._dir_producto(producto) / "producto.yaml"
         if not ruta.is_file():

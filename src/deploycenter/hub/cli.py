@@ -2,7 +2,7 @@
 
     dc-hub migrar
     dc-hub migrar      --via-api      (Supabase por HTTPS, sin el puerto 5432)
-    dc-hub servir      --puerto 8000
+    dc-hub servir      --puerto 8000      (API y web en el mismo origen)
     dc-hub usuario     <uuid> --rol soporte
     dc-hub usuario     <uuid> --rol aprobador --tenant andino
     dc-hub token-dev   <uuid>
@@ -65,8 +65,12 @@ def cmd_servir(args):
     if not hub.es_sqlite and (faltan := migraciones.pendientes(hub.engine, _dir_migraciones(args))):
         print(f"{amarillo}{s['aviso']}{fin} hay {len(faltan)} migración(es) sin aplicar: "
               f"corré 'dc-hub migrar'")
-    app = crear_app(hub, validador=validador)
+    web = None if args.sin_web else _dir_web(args)
+    app = crear_app(hub, validador=validador, web=web,
+                    config_web=config_web(validador) if web else None)
     print(f"{verde}{s['ok']}{fin} hub en http://{args.host}:{args.puerto}/")
+    if web:
+        print(f"  {gris}web desde {web}{fin}")
     from sqlalchemy.engine import make_url
 
     base = make_url(args.db).render_as_string(hide_password=True)
@@ -81,6 +85,31 @@ def cmd_servir(args):
               f"el hub. Para producción, Postgres con las migraciones")
     uvicorn.run(app, host=args.host, port=args.puerto, log_level="info")
     return OK
+
+
+def _dir_web(args):
+    web = Path(args.web) if args.web else Path(args.catalogo) / "web"
+    if not (web / "index.html").is_file():
+        if args.web:
+            raise ErrorDeployCenter(f"{web} no tiene index.html")
+        return None
+    return web
+
+
+def config_web(validador, entorno=None):
+    """Lo que la web necesita saber para ingresar. Todo es público: la
+    publishable key de Supabase está hecha para viajar al navegador."""
+    entorno = os.environ if entorno is None else entorno
+    if validador is None:
+        return {"identidad": None}
+    if validador.secreto:
+        return {"identidad": "token"}
+    url, clave = entorno.get("SUPABASE_URL"), entorno.get("SUPABASE_PUBLISHABLE_KEY")
+    if url and clave:
+        return {"identidad": "supabase", "supabase_url": url.rstrip("/"),
+                "publishable_key": clave}
+    return {"identidad": None,
+            "motivo": "falta SUPABASE_URL o SUPABASE_PUBLISHABLE_KEY en el hub"}
 
 
 def _dir_migraciones(args):
@@ -208,6 +237,9 @@ def construir_parser():
     sv = sub.add_parser("servir", help="levanta la API")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--puerto", type=int, default=8000)
+    sv.add_argument("--web", default=os.environ.get("DC_HUB_WEB"),
+                    help="carpeta del frontend (por defecto, <catalogo>/web)")
+    sv.add_argument("--sin-web", action="store_true", help="solo la API")
     sv.set_defaults(func=cmd_servir)
 
     t = sub.add_parser("tenant", help="da de alta un cliente")

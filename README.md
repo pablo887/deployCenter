@@ -90,7 +90,9 @@ src/deploycenter/            el toolchain (dc)
 src/deploycenter/agente/     el agente (dc-agent)
 src/deploycenter/hub/        el hub (dc-hub)
 supabase/migrations/         esquema del hub, RLS y hook de identidad
-web/                         maqueta navegable del hub
+web/                         la web del hub (conectada, o maqueta si se abre sola)
+Dockerfile.hub               imagen del hub (API + web); Dockerfile es la del agente
+docker-compose.yml           hub + Postgres para desarrollo (ver .env.ejemplo)
 ejemplos/                    cliente ficticio y composes de referencia del agente
 registry/                    el registry privado: decisiones y compose de dev
 ```
@@ -381,15 +383,52 @@ dc-hub token-dev <uuid>                # JWT con aal2, para probar la API
 Con SQLite no hay RLS: los permisos los aplica solo el hub. Sirve para
 desarrollar, no para producción.
 
-## Maqueta del hub (`web/`)
+`dc-hub servir` sirve también la web (`web/`) en el mismo origen que la API, con
+su configuración pública en `/config.json` (la URL de Supabase y la publishable
+key, que están hechas para viajar al navegador). Con `DC_JWT_SECRET`, la web pide
+pegar un token de `dc-hub token-dev` en lugar del login.
 
-Maqueta navegable del hub web de las Fases 2 y 3, sin backend: HTML, CSS y JS
-estáticos con datos ficticios y estado en `localStorage`. Sirve como referencia
-de diseño y de circuito para construir el hub real.
+### Con Docker
+
+`docker-compose.yml` levanta Postgres, aplica las migraciones y arranca el hub
+con la web en http://localhost:8000. La identidad es la del proyecto de
+Supabase; los roles, los clientes y el parque viven en la base local.
 
 ```bash
-cd web && python3 -m http.server 8080   # http://localhost:8080
+cp .env.ejemplo .env                   # DB_PASSWORD, SUPABASE_URL y la publishable key
+docker compose up -d --build
+# ingresá en la web: sin alta, te muestra tu id. Con ese id:
+docker compose exec hub dc-hub usuario <uuid> --rol comercial --email vos@accusys.com.ar
 ```
+
+Desde ahí, Comercial crea los clientes, sus productos y sus usuarios desde la
+web; Soporte emite los códigos para enrolar agentes. Para usar la base de
+Supabase en vez de la local, `.env.ejemplo` explica qué cambiar. La imagen del
+hub es `Dockerfile.hub` (la del agente sigue siendo `Dockerfile`).
+
+## La web (`web/`)
+
+HTML, CSS y JS estáticos, sin build. Tiene dos modos:
+
+- **Conectada**: la sirve el hub (`dc-hub servir` o el compose). Login con
+  Supabase Auth y segundo factor obligatorio (TOTP, con QR para enrolarlo la
+  primera vez), datos reales de la API y órdenes que ejecuta el agente: el
+  preflight muestra las comprobaciones que devolvió, el despliegue sigue los
+  eventos que manda, y la vuelta atrás se puede cancelar mientras corre. El
+  Aprobador habilita a Accusys por un plazo; Comercial carga clientes,
+  productos y usuarios; Soporte emite códigos de enrolamiento y revoca agentes.
+  La sesión vive en `sessionStorage` y el hub manda una CSP que no deja cargar
+  scripts de otro origen.
+- **Maqueta**: abierta sola, sin hub, con datos ficticios y estado en
+  `localStorage`. Sirve como referencia de diseño y de circuito.
+
+```bash
+cd web && python3 -m http.server 8080   # la maqueta, en http://localhost:8080
+```
+
+Lo que el hub todavía no guarda (avisos por mail, doble aprobación, ambientes,
+publicar releases desde la web, cargar variables nuevas) se ve en la maqueta y
+queda deshabilitado en el modo conectado.
 
 Del lado del cliente muestra las instalaciones, el catálogo con la regla de
 habilitación, el despliegue (preflight, variables, doble aprobación,
@@ -403,6 +442,7 @@ cambia de rol.
 | `web/index.html` | Punto de entrada |
 | `web/styles.css` | Estilos y tokens (claro y oscuro), los mismos del documento |
 | `web/data.js` | Datos de ejemplo: productos, releases, clientes, instalaciones |
+| `web/hub.js` | Conexión con el hub: config, login con TOTP, API y estado real |
 | `web/app.js` | Vistas, reglas de habilitación y simulación del agente |
 
 
@@ -463,8 +503,12 @@ que no pasa por ahí no llega a main.
 - [ ] Órdenes entregadas sin respuesta: si el agente muere después de tomar
       una orden, queda `entregada`. Falta marcarla vencida pasado un plazo.
 - [ ] Límite de intentos en el enrolamiento (en el proxy de entrada)
-- [ ] Imagen del hub y su despliegue en la nube de Accusys
-- [ ] Frontend real a partir de la maqueta de `web/`
+- [x] Imagen del hub (`Dockerfile.hub`) y `docker-compose.yml` para levantarlo
+- [ ] Despliegue del hub en la nube de Accusys, con TLS y el dominio propio
+- [x] Web conectada: login con TOTP, parque, catálogo, órdenes reales con sus
+      eventos, historial, usuarios, habilitaciones, parametría, agentes y auditoría
+- [ ] En la web: avisos por mail, doble aprobación, ambientes y publicar
+      releases (hoy se ven en la maqueta, pero el hub no los guarda)
 
 ## Documentación
 

@@ -207,7 +207,7 @@ td .sub{display:block;font-size:.77rem;color:var(--gris)}
 .campo{display:flex;flex-direction:column;gap:5px}
 .campo label,.campo .lbl{font-size:.8rem;font-weight:600;color:var(--ink-2)}
 .campo .ayuda{font-size:.77rem;color:var(--gris)}
-input[type=text],input[type=email],input[type=password],input[type=date],select,textarea{
+input[type=text],input[type=email],input[type=password],input[type=date],input[type=number],select,textarea{
   border:1px solid var(--linea-fuerte);background:var(--surface);border-radius:var(--r-sm);padding:8px 11px;width:100%;min-width:0}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--azul);box-shadow:0 0 0 3px var(--azul-pale)}
 textarea{font-family:var(--mono);font-size:.8rem;line-height:1.55;resize:vertical}
