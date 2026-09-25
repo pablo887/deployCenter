@@ -1,6 +1,7 @@
 """CLI del hub. Sirve la API y permite operar el hub sin la web.
 
     dc-hub migrar
+    dc-hub migrar      --via-api      (Supabase por HTTPS, sin el puerto 5432)
     dc-hub servir      --puerto 8000
     dc-hub usuario     <uuid> --rol soporte
     dc-hub usuario     <uuid> --rol aprobador --tenant andino
@@ -87,6 +88,11 @@ def _dir_migraciones(args):
 
 
 def cmd_migrar(args):
+    if args.via_api:
+        api = migraciones.ApiSupabase.desde_entorno()
+        aplicadas = migraciones.aplicar(api, _dir_migraciones(args))
+        print("\n".join(aplicadas) if aplicadas else "todo al día")
+        return OK
     hub = srv.Hub(srv.conectar(args.db), args.catalogo)
     if hub.es_sqlite:
         hub.crear_tablas()
@@ -178,6 +184,9 @@ def construir_parser():
     sub = p.add_subparsers(dest="comando", required=True)
 
     mg = sub.add_parser("migrar", help="aplica las migraciones SQL pendientes")
+    mg.add_argument("--via-api", action="store_true",
+                    help="por la Management API de Supabase (SUPABASE_URL y "
+                         "SUPABASE_ACCESS_TOKEN) en vez de --db")
     mg.set_defaults(func=cmd_migrar)
 
     us = sub.add_parser("usuario", help="da de alta, cambia el rol o da de baja a una persona")

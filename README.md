@@ -354,8 +354,16 @@ pueden leer desde la web ni con acceso directo a la base.
 ```bash
 # con Supabase: el esquema, la RLS y el hook
 supabase db push                       # o: DC_HUB_DB=… dc-hub migrar
+# sin salida al 5432 (solo HTTPS): la Management API, con el mismo registro
+SUPABASE_URL=https://<proyecto>.supabase.co SUPABASE_ACCESS_TOKEN=sbp_… \
+  dc-hub migrar --via-api
 # Authentication → Hooks → Custom Access Token → public.custom_access_token_hook
 # Authentication → Sign In / Up: sin registro abierto; MFA (TOTP) habilitado
+
+# prueba de integración contra el proyecto real (usuarios, TOTP, JWKS, hook y
+# RLS con los claims reales; borra todo al final). Se saltea sin las variables.
+# Necesita además SUPABASE_PUBLISHABLE_KEY y SUPABASE_SECRET_KEY.
+python ejemplos/integracion-supabase.py
 
 export DC_HUB_DB=postgresql+psycopg://…     # la conexión a Postgres del proyecto
 export SUPABASE_URL=https://<proyecto>.supabase.co   # de acá salen JWKS y emisor
@@ -440,8 +448,13 @@ que no pasa por ahí no llega a main.
 - [x] Identidad por JWT (JWKS o secreto), segundo factor obligatorio, roles
       desde las tablas, RLS por cliente, habilitaciones y auditoría
 - [x] Migraciones SQL versionadas (`supabase/migrations/`)
-- [ ] Conectar el proyecto de Supabase real: `supabase db push`, activar el hook
-      y el MFA, y el dominio propio (`auth.accusys.com.ar`)
+- [x] `dc-hub migrar --via-api`: migraciones por la Management API, para
+      entornos sin salida al puerto de Postgres
+- [ ] Conectar el proyecto de Supabase real (`deploycenter-dev`): TOTP ya está
+      habilitado; falta aplicar las migraciones (`dc-hub migrar --via-api`),
+      activar el hook, cerrar el registro abierto y correr
+      `ejemplos/integracion-supabase.py`. Después, el dominio propio
+      (`auth.accusys.com.ar`)
 - [ ] Invitaciones: hoy el usuario se crea en el proveedor y se le asigna el rol
       con `dc-hub usuario` o la API; falta que el hub mande la invitación
 - [ ] Variables nuevas desde la web: el formulario tiene que escribir en el
