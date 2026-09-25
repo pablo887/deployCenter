@@ -18,7 +18,6 @@ from deploycenter.agente import conector as con  # noqa: E402
 from deploycenter.hub.api import crear_app  # noqa: E402
 
 URL = "http://localhost"
-TOKEN_ADMIN = "admin-de-prueba"
 
 
 class Red:
@@ -44,7 +43,7 @@ def healthchecks_ok(base):
 
 @pytest.fixture
 def red(hub):
-    return Red(TestClient(crear_app(hub, token_admin=TOKEN_ADMIN, intervalo_poll_s=0)))
+    return Red(TestClient(crear_app(hub, intervalo_poll_s=0)))
 
 
 @pytest.fixture

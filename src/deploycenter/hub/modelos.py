@@ -1,10 +1,11 @@
 """Modelo de datos del hub.
 
-Es el mismo modelo del documento de arquitectura, reducido a lo que necesita el
-canal con el agente. Corre sobre SQLite en desarrollo y en los tests, y sobre el
-Postgres de Supabase en producción. El aislamiento por cliente con RLS se agrega
-sobre estas tablas en el paso siguiente; hoy el hub las lee con su propia
-credencial de servicio, que nunca sale del perímetro de Accusys.
+Es el mismo modelo del documento de arquitectura. En Postgres lo crean las
+migraciones de `supabase/migrations/`, que además definen el aislamiento por
+cliente (RLS); estas clases son el mapeo que usa el hub, y un test compara las
+dos cosas para que no se separen. En SQLite —desarrollo y la mayoría de los
+tests— las tablas salen de acá y no hay RLS: el hub aplica los permisos en la
+aplicación igual, y la base es la segunda barrera.
 
 Lo que el hub guarda: clientes, parametría, agentes, instalaciones, órdenes y
 sus eventos. Lo que no guarda: valores de variables ni credenciales de los
@@ -25,6 +26,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -74,7 +76,8 @@ class CodigoEnrolamiento(Base):
     __tablename__ = "codigos_enrolamiento"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # diferido: la web no tiene permiso sobre esta columna y no la tiene que pedir
+    hash: Mapped[str] = mapped_column(String(64), unique=True, deferred=True)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"))
     host: Mapped[str | None] = mapped_column(String(200))
     creado: Mapped[datetime.datetime] = mapped_column(DateTime)
@@ -89,7 +92,7 @@ class Agente(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"))
     host: Mapped[str] = mapped_column(String(200))
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, deferred=True)
     version: Mapped[str | None] = mapped_column(String(40))
     estado: Mapped[str] = mapped_column(String(20), default="activo")  # activo | revocado
     enrolado: Mapped[datetime.datetime] = mapped_column(DateTime)
@@ -128,6 +131,7 @@ class Orden(Base):
     detalle: Mapped[str | None] = mapped_column(Text)
     resumen: Mapped[dict | None] = mapped_column(JSON)
     pedida_por: Mapped[str] = mapped_column(String(200))
+    pedida_por_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     cancelar_rollback: Mapped[bool] = mapped_column(Boolean, default=False)
     creada: Mapped[datetime.datetime] = mapped_column(DateTime)
     entregada: Mapped[datetime.datetime | None] = mapped_column(DateTime)
@@ -152,3 +156,62 @@ class EventoOrden(Base):
     ts_agente: Mapped[str | None] = mapped_column(String(40))
     evento: Mapped[str] = mapped_column(String(60))
     datos: Mapped[dict | None] = mapped_column(JSON)
+
+
+# roles de las personas (los agentes no tienen rol: tienen su token)
+ROLES_CLIENTE = ("lector", "operador", "aprobador")
+ROLES_ACCUSYS = ("soporte", "publicador", "comercial")
+
+
+class UsuarioTenant(Base):
+    """Persona de un cliente. El id es el `sub` del JWT (auth.users en Supabase)."""
+
+    __tablename__ = "usuarios_tenant"
+
+    usuario_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"))
+    rol: Mapped[str] = mapped_column(String(20))
+    nombre: Mapped[str | None] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320))
+
+
+class UsuarioAccusys(Base):
+    __tablename__ = "usuarios_accusys"
+
+    usuario_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    rol: Mapped[str] = mapped_column(String(20))
+    nombre: Mapped[str | None] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320))
+
+
+class Habilitacion(Base):
+    """El cliente autoriza a Accusys a operar su instalación, por un plazo.
+
+    Sin una habilitación vigente, Accusys ve el parque pero no ordena: es lo que
+    hace de la plataforma una herramienta del cliente y no un acceso remoto de
+    Accusys con otra cara."""
+
+    __tablename__ = "habilitaciones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    otorgada_por: Mapped[str] = mapped_column(Uuid(as_uuid=False))
+    otorgada: Mapped[datetime.datetime] = mapped_column(DateTime)
+    vence: Mapped[datetime.datetime] = mapped_column(DateTime)
+    motivo: Mapped[str | None] = mapped_column(Text)
+    revocada: Mapped[datetime.datetime | None] = mapped_column(DateTime)
+
+
+class Auditoria(Base):
+    """Quién hizo qué desde la web. Solo se inserta: no hay política para editar."""
+
+    __tablename__ = "auditoria"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fecha: Mapped[datetime.datetime] = mapped_column(DateTime)
+    usuario_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    usuario: Mapped[str | None] = mapped_column(String(320))
+    tenant_id: Mapped[str | None] = mapped_column(String(40), index=True)
+    accion: Mapped[str] = mapped_column(String(60))
+    detalle: Mapped[dict | None] = mapped_column(JSON)
+

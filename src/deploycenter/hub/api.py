@@ -5,9 +5,10 @@ Dos puertas con credenciales distintas:
 - `/api/agente/v1/*` — la usan los agentes, con su token propio en
   `Authorization: Bearer`. Nunca con la clave de servicio de la base, que no sale
   del perímetro de Accusys.
-- `/api/v1/*` — la usa la web. Hasta que entre Supabase Auth, la protege un
-  token de administración (`DC_HUB_TOKEN_ADMIN`). Sin ese token configurado, la
-  puerta está cerrada.
+- `/api/v1/*` — la usa la web, con el JWT de la persona (Supabase Auth u otro
+  proveedor). El token dice quién es; qué puede hacer lo dicen las tablas de
+  usuarios, y lo vuelven a chequear las políticas RLS de la base. Sin validador
+  configurado, esta puerta está cerrada.
 
 El long-poll es asíncrono: un agente esperando no ocupa un hilo, solo una
 corrutina que consulta la base una vez por segundo (la consulta sí va al pool
@@ -15,7 +16,7 @@ de hilos, y dura milisegundos).
 """
 
 import asyncio
-import hmac
+import datetime
 import time
 from typing import Annotated, Any
 
@@ -25,7 +26,7 @@ from . import servicio as srv
 ESPERA_MAXIMA_S = 30
 
 
-def crear_app(hub, token_admin=None, intervalo_poll_s=1.0):
+def crear_app(hub, validador=None, intervalo_poll_s=1.0):
     try:
         from fastapi import Depends, FastAPI, Header, Query, Request, Response
         from fastapi.concurrency import run_in_threadpool
@@ -79,13 +80,53 @@ def crear_app(hub, token_admin=None, intervalo_poll_s=1.0):
         instalacion: str = Field(max_length=100)
         tipo: str = Field(max_length=20)
         release: str | None = Field(default=None, max_length=40)
-        pedida_por: str = Field(min_length=1, max_length=200)
+
+    class PedidoTenant(BaseModel):
+        id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,39}$")
+        nombre: str = Field(min_length=1, max_length=200)
+
+    class PedidoEstado(BaseModel):
+        estado: str = Field(max_length=20)
+
+    class PedidoProducto(BaseModel):
+        mantenimiento_hasta: datetime.date
+        autoservicio: bool = True
+        canal: str = Field(default="estable", max_length=20)
+
+    class PedidoHabilitacion(BaseModel):
+        horas: int = Field(ge=1, le=srv.MAX_HORAS_HABILITACION)
+        motivo: str | None = Field(default=None, max_length=500)
+
+    class PedidoUsuario(BaseModel):
+        rol: str = Field(max_length=20)
+        tenant: str | None = Field(default=None, max_length=40)
+        nombre: str | None = Field(default=None, max_length=200)
+        email: str | None = Field(default=None, max_length=320)
 
     # -- errores -------------------------------------------------------------- #
 
     @app.exception_handler(srv.ErrorHub)
     async def _error_hub(_request: Request, e: srv.ErrorHub):
         return JSONResponse(status_code=e.codigo_http, content={"detalle": e.mensaje})
+
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.orm.exc import StaleDataError
+
+    @app.exception_handler(StaleDataError)
+    async def _fila_no_modificada(_request: Request, _e: StaleDataError):
+        """Con RLS, un UPDATE que la política no admite no toca filas."""
+        return JSONResponse(status_code=403,
+                            content={"detalle": "la base no permitió modificar ese registro"})
+
+    @app.exception_handler(DBAPIError)
+    async def _error_base(_request: Request, e: DBAPIError):
+        """Si la RLS de la base rechaza algo que la aplicación dejó pasar, es un
+        403 y no un 500: la segunda barrera funcionó."""
+        mensaje = str(getattr(e, "orig", e))
+        if "row-level security" in mensaje or "permission denied" in mensaje:
+            return JSONResponse(status_code=403,
+                                content={"detalle": "la base rechazó la operación por permisos"})
+        raise e
 
     # -- credenciales ---------------------------------------------------------- #
 
@@ -99,13 +140,13 @@ def crear_app(hub, token_admin=None, intervalo_poll_s=1.0):
 
     AgenteActual = Annotated[dict, Depends(agente_actual)]
 
-    def admin(authorization: str | None = Header(default=None)):
-        if not token_admin:
-            raise srv.Prohibido("la API de administración no está habilitada en este hub")
-        recibido = _bearer(authorization) or ""
-        if not hmac.compare_digest(recibido.encode(), token_admin.encode()):
-            raise srv.NoAutorizado("token de administración inválido")
-        return True
+    def persona(authorization: str | None = Header(default=None)):
+        if validador is None:
+            raise srv.Prohibido("la API de la web no está habilitada: falta configurar la "
+                                "identidad (SUPABASE_URL o DC_JWT_*)")
+        return hub.perfil(validador.validar(_bearer(authorization)))
+
+    Persona = Annotated[srv.Perfil, Depends(persona)]
 
     # -- salud ------------------------------------------------------------------ #
 
@@ -151,38 +192,97 @@ def crear_app(hub, token_admin=None, intervalo_poll_s=1.0):
         return hub.cerrar_orden(agente["id"], orden_id, pedido.resultado,
                                 pedido.detalle, pedido.resumen)
 
-    # -- web (administración, provisoria hasta Supabase Auth) ------------------ #
+    # -- web ------------------------------------------------------------------- #
 
-    @app.post("/api/v1/tenants/{tenant_id}/codigos", dependencies=[Depends(admin)])
-    def codigo(tenant_id: str, pedido: PedidoCodigo):
-        return hub.emitir_codigo(tenant_id, host=pedido.host)
+    @app.get("/api/v1/yo")
+    def yo(p: Persona):
+        return p.a_dict()
 
-    @app.get("/api/v1/parque", dependencies=[Depends(admin)])
-    def parque(tenant: str | None = None):
-        return hub.parque(tenant_id=tenant)
+    @app.get("/api/v1/parque")
+    def parque(p: Persona, tenant: str | None = None):
+        return hub.parque(tenant_id=tenant, perfil=p)
 
-    @app.post("/api/v1/ordenes", status_code=201, dependencies=[Depends(admin)])
-    def crear_orden(pedido: PedidoOrden):
+    @app.get("/api/v1/ordenes")
+    def ordenes(p: Persona, instalacion: str | None = None, tenant: str | None = None,
+                limite: Annotated[int, Query(ge=1, le=500)] = 50):
+        return hub.ordenes(perfil=p, tenant_id=tenant, instalacion=instalacion, limite=limite)
+
+    @app.post("/api/v1/ordenes", status_code=201)
+    def crear_orden(pedido: PedidoOrden, p: Persona):
         return hub.crear_orden(pedido.agente, pedido.instalacion, pedido.tipo,
-                               release=pedido.release, pedida_por=pedido.pedida_por)
+                               release=pedido.release, perfil=p)
 
-    @app.get("/api/v1/ordenes/{orden_id}", dependencies=[Depends(admin)])
-    def ver_orden(orden_id: str):
-        return hub.orden(orden_id)
+    @app.get("/api/v1/ordenes/{orden_id}")
+    def ver_orden(orden_id: str, p: Persona):
+        return hub.orden(orden_id, perfil=p)
 
-    @app.post("/api/v1/ordenes/{orden_id}/cancelar", dependencies=[Depends(admin)])
-    def cancelar(orden_id: str):
-        hub.cancelar_orden(orden_id)
+    @app.post("/api/v1/ordenes/{orden_id}/cancelar")
+    def cancelar(orden_id: str, p: Persona):
+        hub.cancelar_orden(orden_id, perfil=p)
         return {"ok": True}
 
-    @app.post("/api/v1/ordenes/{orden_id}/cancelar-rollback", dependencies=[Depends(admin)])
-    def cancelar_rollback(orden_id: str):
-        hub.pedir_cancelacion_rollback(orden_id)
+    @app.post("/api/v1/ordenes/{orden_id}/cancelar-rollback")
+    def cancelar_rollback(orden_id: str, p: Persona):
+        hub.pedir_cancelacion_rollback(orden_id, perfil=p)
         return {"ok": True}
 
-    @app.post("/api/v1/agentes/{agente_id}/revocar", dependencies=[Depends(admin)])
-    def revocar(agente_id: str):
-        hub.revocar_agente(agente_id)
+    @app.post("/api/v1/tenants", status_code=201)
+    def crear_tenant(pedido: PedidoTenant, p: Persona):
+        return hub.crear_tenant(pedido.id, pedido.nombre, perfil=p)
+
+    @app.get("/api/v1/tenants/{tenant_id}")
+    def ver_tenant(tenant_id: str, p: Persona):
+        return hub.parametria(tenant_id, perfil=p)
+
+    @app.put("/api/v1/tenants/{tenant_id}/estado")
+    def estado_tenant(tenant_id: str, pedido: PedidoEstado, p: Persona):
+        hub.cambiar_estado_tenant(tenant_id, pedido.estado, perfil=p)
         return {"ok": True}
+
+    @app.put("/api/v1/tenants/{tenant_id}/productos/{producto}")
+    def adquirir(tenant_id: str, producto: str, pedido: PedidoProducto, p: Persona):
+        hub.adquirir(tenant_id, producto, pedido.mantenimiento_hasta,
+                     autoservicio=pedido.autoservicio, canal=pedido.canal, perfil=p)
+        return hub.parametria(tenant_id, perfil=p)
+
+    @app.post("/api/v1/tenants/{tenant_id}/codigos")
+    def codigo(tenant_id: str, pedido: PedidoCodigo, p: Persona):
+        return hub.emitir_codigo(tenant_id, host=pedido.host, perfil=p)
+
+    @app.post("/api/v1/agentes/{agente_id}/revocar")
+    def revocar(agente_id: str, p: Persona):
+        hub.revocar_agente(agente_id, perfil=p)
+        return {"ok": True}
+
+    @app.get("/api/v1/habilitaciones")
+    def habilitaciones(p: Persona, tenant: str | None = None):
+        return hub.habilitaciones(perfil=p, tenant_id=tenant)
+
+    @app.post("/api/v1/habilitaciones", status_code=201)
+    def habilitar(pedido: PedidoHabilitacion, p: Persona):
+        return hub.habilitar_asistencia(p, pedido.horas, pedido.motivo)
+
+    @app.post("/api/v1/habilitaciones/{habilitacion_id}/revocar")
+    def revocar_habilitacion(habilitacion_id: int, p: Persona):
+        return hub.revocar_habilitacion(p, habilitacion_id)
+
+    @app.get("/api/v1/usuarios")
+    def usuarios(p: Persona, tenant: str | None = None):
+        return hub.usuarios(perfil=p, tenant_id=tenant)
+
+    @app.put("/api/v1/usuarios/{usuario_id}")
+    def asignar_usuario(usuario_id: str, pedido: PedidoUsuario, p: Persona):
+        return hub.asignar_usuario(usuario_id, pedido.rol, tenant_id=pedido.tenant,
+                                   nombre=pedido.nombre, email=pedido.email, perfil=p)
+
+    @app.delete("/api/v1/usuarios/{usuario_id}")
+    def quitar_usuario(usuario_id: str, p: Persona):
+        hub.quitar_usuario(usuario_id, perfil=p)
+        return {"ok": True}
+
+    @app.get("/api/v1/auditoria")
+    def auditoria(p: Persona, tenant: str | None = None,
+                  limite: Annotated[int, Query(ge=1, le=500)] = 100):
+        return hub.auditoria(perfil=p, tenant_id=tenant, limite=limite)
 
     return app

@@ -1,6 +1,10 @@
 """CLI del hub. Sirve la API y permite operar el hub sin la web.
 
+    dc-hub migrar
     dc-hub servir      --puerto 8000
+    dc-hub usuario     <uuid> --rol soporte
+    dc-hub usuario     <uuid> --rol aprobador --tenant andino
+    dc-hub token-dev   <uuid>
     dc-hub tenant      andino "Banco Andino"
     dc-hub adquirir    andino mep --hasta 2026-12-31
     dc-hub codigo      andino --host srv-dock-01
@@ -12,6 +16,9 @@
 La base sale de `--db` o de `DC_HUB_DB` (por defecto un SQLite local) y el
 catálogo de `--catalogo` o `DC_HUB_CATALOGO` (la raíz del repo, la que tiene
 `productos/`).
+
+La consola opera como el sistema, sin pasar por la RLS: es para Accusys, dentro
+de su perímetro. La web opera siempre con la identidad de la persona.
 """
 
 import argparse
@@ -22,6 +29,7 @@ from pathlib import Path
 
 from ..errores import ErrorDeployCenter
 from ..salida import ERROR_USO, FALLA_VALIDACION, OK, paleta, preparar_salida, simbolos, usar_color
+from . import migraciones
 from . import servicio as srv
 
 DB_POR_DEFECTO = "sqlite:///hub.db"
@@ -47,17 +55,68 @@ def cmd_servir(args):
     import uvicorn
 
     from .api import crear_app
+    from .identidad import ValidadorJWT
 
-    token = os.environ.get("DC_HUB_TOKEN_ADMIN")
-    app = crear_app(_hub(args), token_admin=token)
+    validador = ValidadorJWT.desde_entorno()
+    hub = _hub(args)
     verde, _rojo, amarillo, gris, fin = paleta(usar_color(args))
     s = simbolos()
+    if not hub.es_sqlite and (faltan := migraciones.pendientes(hub.engine, _dir_migraciones(args))):
+        print(f"{amarillo}{s['aviso']}{fin} hay {len(faltan)} migración(es) sin aplicar: "
+              f"corré 'dc-hub migrar'")
+    app = crear_app(hub, validador=validador)
     print(f"{verde}{s['ok']}{fin} hub en http://{args.host}:{args.puerto}/")
-    print(f"  {gris}base {args.db} · catálogo {args.catalogo}{fin}")
-    if not token:
-        print(f"{amarillo}{s['aviso']}{fin} sin DC_HUB_TOKEN_ADMIN: la API de la web queda "
-              f"cerrada; el canal de los agentes funciona igual")
+    from sqlalchemy.engine import make_url
+
+    base = make_url(args.db).render_as_string(hide_password=True)
+    print(f"  {gris}base {base} · catálogo {args.catalogo}{fin}")
+    if validador is None:
+        print(f"{amarillo}{s['aviso']}{fin} sin identidad configurada (SUPABASE_URL o "
+              f"DC_JWT_*): la API de la web queda cerrada; el canal de los agentes funciona igual")
+    elif validador.secreto:
+        print(f"  {gris}identidad: secreto HS256 compartido{fin}")
+    if hub.es_sqlite:
+        print(f"{amarillo}{s['aviso']}{fin} SQLite: sin RLS; los permisos los aplica solo "
+              f"el hub. Para producción, Postgres con las migraciones")
     uvicorn.run(app, host=args.host, port=args.puerto, log_level="info")
+    return OK
+
+
+def _dir_migraciones(args):
+    return args.migraciones or migraciones.directorio_por_defecto(args.catalogo)
+
+
+def cmd_migrar(args):
+    hub = srv.Hub(srv.conectar(args.db), args.catalogo)
+    if hub.es_sqlite:
+        hub.crear_tablas()
+        print("SQLite: tablas creadas desde el modelo (sin RLS)")
+        return OK
+    aplicadas = migraciones.aplicar(hub.engine, _dir_migraciones(args))
+    print("\n".join(aplicadas) if aplicadas else "todo al día")
+    return OK
+
+
+def cmd_usuario(args):
+    if args.quitar:
+        _hub(args).quitar_usuario(args.id)
+        print(f"{args.id}: dado de baja")
+        return OK
+    _imprimir(_hub(args).asignar_usuario(args.id, args.rol, tenant_id=args.tenant,
+                                         nombre=args.nombre, email=args.email))
+    return OK
+
+
+def cmd_token_dev(args):
+    from .identidad import token_de_desarrollo
+
+    secreto = os.environ.get("DC_JWT_SECRET")
+    if not secreto:
+        print("hace falta DC_JWT_SECRET: el token se firma con el mismo secreto que valida "
+              "el hub", file=sys.stderr)
+        return ERROR_USO
+    print(token_de_desarrollo(secreto, args.id, aal="aal1" if args.sin_mfa else "aal2",
+                              horas=args.horas, emisor=os.environ.get("DC_JWT_EMISOR")))
     return OK
 
 
@@ -115,7 +174,27 @@ def construir_parser():
     p.add_argument("--db", default=os.environ.get("DC_HUB_DB", DB_POR_DEFECTO))
     p.add_argument("--catalogo",
                    default=os.environ.get("DC_HUB_CATALOGO") or str(_catalogo_por_defecto()))
+    p.add_argument("--migraciones", help="por defecto, <catalogo>/supabase/migrations")
     sub = p.add_subparsers(dest="comando", required=True)
+
+    mg = sub.add_parser("migrar", help="aplica las migraciones SQL pendientes")
+    mg.set_defaults(func=cmd_migrar)
+
+    us = sub.add_parser("usuario", help="da de alta, cambia el rol o da de baja a una persona")
+    us.add_argument("id", help="el id del usuario en el proveedor de identidad (uuid)")
+    us.add_argument("--rol", choices=["lector", "operador", "aprobador",
+                                      "soporte", "publicador", "comercial"])
+    us.add_argument("--tenant", help="cliente, para los roles de cliente")
+    us.add_argument("--nombre")
+    us.add_argument("--email")
+    us.add_argument("--quitar", action="store_true")
+    us.set_defaults(func=cmd_usuario)
+
+    td = sub.add_parser("token-dev", help="emite un JWT de desarrollo firmado con DC_JWT_SECRET")
+    td.add_argument("id")
+    td.add_argument("--horas", type=float, default=8)
+    td.add_argument("--sin-mfa", action="store_true")
+    td.set_defaults(func=cmd_token_dev)
 
     sv = sub.add_parser("servir", help="levanta la API")
     sv.add_argument("--host", default="127.0.0.1")

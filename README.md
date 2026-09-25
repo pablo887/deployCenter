@@ -1,13 +1,14 @@
-# deployCenter — Fases 0, 1 y el canal de la Fase 2
+# deployCenter — Fases 0, 1 y 2
 
 Toolchain de releases, agente de despliegue y hub para los productos del área:
 MEP, Factnova, Pases & CRyL, Repi, SML y CEDIN.
 
 **Fase 0** convierte el release en algo ejecutable. **Fase 1** agrega el agente
 que lo aplica en el servidor del cliente, lo verifica y lo revierte si falla.
-**Fase 2** empieza por el canal entre el hub y el agente: el hub encola la
-orden y el agente sale a buscarla. Todavía no hay web ni login de usuarios: el
-hub se opera por su API y por `dc-hub`.
+**Fase 2** suma el hub: el canal con el agente (el hub encola la orden y el
+agente sale a buscarla), la identidad de las personas con segundo factor y el
+aislamiento por cliente en la base. Todavía no hay frontend: el hub se opera por
+su API y por `dc-hub`.
 
 | | Antes | Ahora |
 |---|---|---|
@@ -85,8 +86,12 @@ productos/<codigo>/
     ├── manifiesto.json      el contrato del release
     └── changelog.md         lo que se le muestra al cliente
 
-src/deploycenter/            el toolchain
-ejemplos/cliente-demo/       un cliente ficticio para probar
+src/deploycenter/            el toolchain (dc)
+src/deploycenter/agente/     el agente (dc-agent)
+src/deploycenter/hub/        el hub (dc-hub)
+supabase/migrations/         esquema del hub, RLS y hook de identidad
+web/                         maqueta navegable del hub
+ejemplos/                    cliente ficticio y composes de referencia del agente
 registry/                    el registry privado: decisiones y compose de dev
 ```
 
@@ -254,6 +259,145 @@ incluye.
 `--raiz-permitida`: el agente no opera fuera de ese directorio, y eso se verifica
 leyendo el compose con el que se lo levanta.
 
+## El hub (Fase 2)
+
+La web centralizada: parametría, órdenes, parque y auditoría. No ejecuta nada
+remoto: deja la orden encolada y es el agente el que sale a buscarla.
+
+### El canal con el agente
+
+```
+agente (servidor del cliente)                      hub (nube de Accusys)
+  │  POST /api/agente/v1/enrolar  código de un uso ──▶ token propio; el hub guarda el hash
+  │  POST /api/agente/v1/latido   inventario       ──▶ parque: qué corre dónde
+  │  GET  /api/agente/v1/ordenes/siguiente  (long-poll 25 s) ◀── orden + paquete
+  │  POST /api/agente/v1/ordenes/{id}/eventos  logs ──▶ la respuesta trae "cancelar rollback"
+  │  POST /api/agente/v1/ordenes/{id}/resultado     ──▶ cierre
+```
+
+Todo lo inicia el agente, por 443, hacia un solo dominio. No hay puertos
+entrantes ni VPN.
+
+```bash
+# agente (en el servidor del cliente)
+dc-agent enrolar  --hub https://deploy.accusys.com.ar --codigo DC-XXXX-XXXX
+dc-agent conectar --raiz /opt/accusys --clave-publica /etc/deploycenter/cosign.pub
+```
+
+`ejemplos/agente-conectado-compose.yml` es el compose de referencia para dejar
+el agente levantado en el cliente.
+
+**Qué decide el hub.** La habilitación se evalúa al encolar, no al ejecutar.
+Una orden de despliegue o preflight se rechaza, con el motivo a la vista, si:
+
+- el agente está fuera de línea (más de 90 s sin contacto) o revocado;
+- ya hay una orden abierta sobre esa instalación (el lock, adelantado);
+- el cliente está suspendido o no tiene el producto adquirido;
+- el release se publicó después del fin del mantenimiento y no es crítico de
+  seguridad;
+- trae migraciones (circuito asistido), el cliente tiene el autoservicio
+  deshabilitado o el release es del canal anticipado y el cliente no;
+- la ruta de upgrade desde la versión que reporta el agente no está soportada.
+
+El rollback no se bloquea nunca: ni por mantenimiento vencido ni por
+suspensión.
+
+**Qué verifica el agente.** El hub propone y el agente verifica. Con el hub
+comprometido se pueden encolar órdenes, pero no se puede hacer desplegar algo que
+Accusys no firmó:
+
+- La firma del manifiesto se verifica con una clave pública que configura el
+  cliente. El hub no la manda. Sin clave, `dc-agent conectar` no arranca, salvo
+  con `--sin-firma`, que existe solo para pruebas.
+- La plantilla viaja desde el hub, así que el manifiesto firmado declara su
+  huella (`plantilla_sha256`, la escribe `dc sellar`) y el agente la compara.
+  Además, Jinja corre en su sandbox.
+- El paquete tiene que corresponder a la orden, y la instalación tiene que ser
+  un nombre simple dentro de `--raiz`.
+
+**Cuando se corta la red.** Eventos y resultados pasan por un buzón en disco. Si
+el hub no responde, el despliegue sigue, termina, verifica o revierte, y el
+buzón se vacía cuando vuelve la conexión. Un hub caído no demora la cuenta
+regresiva del rollback. Con el token revocado, el agente se detiene.
+
+### Identidad y aislamiento por cliente
+
+Las personas entran con el JWT de su proveedor de identidad (Supabase Auth, u
+otro que publique sus claves). El hub valida firma, emisor, audiencia,
+vencimiento y **segundo factor** (`aal2`); los agentes siguen con su token
+propio y nunca usan el proveedor.
+
+**Qué puede hacer cada uno no sale del token**: sale de `usuarios_tenant` y
+`usuarios_accusys`, en cada pedido. Quitarle el rol a alguien corta el acceso en
+el acto, sin esperar a que venza su sesión.
+
+| Rol | Lado | Puede |
+|---|---|---|
+| Lector | Cliente | ver parque, órdenes y auditoría de su organización |
+| Operador | Cliente | ordenar preflight, despliegue y rollback; cancelar |
+| Aprobador | Cliente | administrar usuarios de su organización; habilitar a Accusys por un plazo |
+| Soporte | Accusys | ver todo el parque; emitir códigos y revocar agentes; ordenar **solo con habilitación vigente del cliente** |
+| Publicador | Accusys | (releases: todavía por el repo y `dc sellar`/`dc firmar`) |
+| Comercial | Accusys | alta de clientes y parametría comercial |
+
+**Dos barreras.** El hub chequea el rol en la aplicación y, en Postgres, además
+corre cada operación de una persona con su identidad (`set local role
+authenticated` y sus claims), así que las políticas RLS de
+`supabase/migrations/` son una segunda barrera independiente: una consulta sin
+filtro no devuelve filas de otro cliente aunque el código se equivoque.
+`tests/test_hub_postgres*.py` lo prueban contra un Postgres real, incluso
+apagando los chequeos de la aplicación. Los hashes de tokens y códigos no se
+pueden leer desde la web ni con acceso directo a la base.
+
+### Levantarlo
+
+```bash
+# con Supabase: el esquema, la RLS y el hook
+supabase db push                       # o: DC_HUB_DB=… dc-hub migrar
+# Authentication → Hooks → Custom Access Token → public.custom_access_token_hook
+# Authentication → Sign In / Up: sin registro abierto; MFA (TOTP) habilitado
+
+export DC_HUB_DB=postgresql+psycopg://…     # la conexión a Postgres del proyecto
+export SUPABASE_URL=https://<proyecto>.supabase.co   # de acá salen JWKS y emisor
+dc-hub usuario <uuid> --rol soporte --nombre "…"      # los de Accusys, solo por consola
+dc-hub tenant andino "Banco Andino"
+dc-hub adquirir andino mep --hasta 2026-12-31
+dc-hub servir --puerto 8000
+
+# desarrollo local, sin proveedor: SQLite y tokens firmados con un secreto
+export DC_JWT_SECRET=<32+ caracteres> DC_HUB_DB=sqlite:///hub.db
+dc-hub usuario <uuid> --rol operador --tenant andino
+dc-hub token-dev <uuid>                # JWT con aal2, para probar la API
+```
+
+Con SQLite no hay RLS: los permisos los aplica solo el hub. Sirve para
+desarrollar, no para producción.
+
+## Maqueta del hub (`web/`)
+
+Maqueta navegable del hub web de las Fases 2 y 3, sin backend: HTML, CSS y JS
+estáticos con datos ficticios y estado en `localStorage`. Sirve como referencia
+de diseño y de circuito para construir el hub real.
+
+```bash
+cd web && python3 -m http.server 8080   # http://localhost:8080
+```
+
+Del lado del cliente muestra las instalaciones, el catálogo con la regla de
+habilitación, el despliegue (preflight, variables, doble aprobación,
+verificación y rollback con cuenta regresiva), el historial y los usuarios. Del
+lado de Accusys muestra el tablero de parque, la parametría comercial, la
+publicación de releases, los agentes y la auditoría. Desde el menú de usuario se
+cambia de rol.
+
+| Archivo | Contenido |
+| --- | --- |
+| `web/index.html` | Punto de entrada |
+| `web/styles.css` | Estilos y tokens (claro y oscuro), los mismos del documento |
+| `web/data.js` | Datos de ejemplo: productos, releases, clientes, instalaciones |
+| `web/app.js` | Vistas, reglas de habilitación y simulación del agente |
+
+
 ## Tests
 
 ```bash
@@ -293,14 +437,18 @@ que no pasa por ahí no llega a main.
 
 - [x] Canal hub–agente: enrolamiento, latido, órdenes con long-poll, eventos,
       resultado, cancelación del rollback desde el hub y buzón ante cortes
-- [ ] Identidad con Supabase Auth y RLS por tenant. Hoy la API de la web usa un
-      token de administración provisorio y el hub lee con su propia credencial.
-- [ ] Migraciones versionadas de la base, en lugar de `create_all`
+- [x] Identidad por JWT (JWKS o secreto), segundo factor obligatorio, roles
+      desde las tablas, RLS por cliente, habilitaciones y auditoría
+- [x] Migraciones SQL versionadas (`supabase/migrations/`)
+- [ ] Conectar el proyecto de Supabase real: `supabase db push`, activar el hook
+      y el MFA, y el dominio propio (`auth.accusys.com.ar`)
+- [ ] Invitaciones: hoy el usuario se crea en el proveedor y se le asigna el rol
+      con `dc-hub usuario` o la API; falta que el hub mande la invitación
 - [ ] Variables nuevas desde la web: el formulario tiene que escribir en el
-      `.env` del servidor sin que el valor pase por el hub. Hoy se completan
-      solas si tienen default; las que no tienen, se cargan en el servidor.
+      `.env` del servidor sin que el valor pase por el hub
 - [ ] Órdenes entregadas sin respuesta: si el agente muere después de tomar
       una orden, queda `entregada`. Falta marcarla vencida pasado un plazo.
+- [ ] Límite de intentos en el enrolamiento (en el proxy de entrada)
 - [ ] Imagen del hub y su despliegue en la nube de Accusys
 - [ ] Frontend real a partir de la maqueta de `web/`
 
