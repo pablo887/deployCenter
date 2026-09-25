@@ -453,8 +453,9 @@ que no pasa por ahí no llega a main.
 - [x] Proyecto de Supabase real (`deploycenter-dev`): migraciones aplicadas,
       hook activo, TOTP habilitado, y `ejemplos/integracion-supabase.py` en
       verde (tokens aal2 reales, JWKS, hook y RLS con los claims reales)
-- [ ] Cerrar el registro abierto en `deploycenter-dev` y el dominio propio
-      (`auth.accusys.com.ar`)
+- [x] Registro abierto cerrado en `deploycenter-dev`: las altas van solo por
+      la secret key (o las invitaciones, cuando estén)
+- [ ] Dominio propio para Auth (`auth.accusys.com.ar`)
 - [ ] Invitaciones: hoy el usuario se crea en el proveedor y se le asigna el rol
       con `dc-hub usuario` o la API; falta que el hub mande la invitación
 - [ ] Variables nuevas desde la web: el formulario tiene que escribir en el
