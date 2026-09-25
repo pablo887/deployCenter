@@ -1,0 +1,24 @@
+{
+  "producto": "demo",
+  "release": "2.0.0",
+  "publicado": "2026-09-21",
+  "canal": "estable",
+  "imagenes": {
+    "web": "docker.io/library/nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+  },
+  "desde_version": ">=1.0.0",
+  "db_migrations": false,
+  "rollback_seguro": true,
+  "critico_seguridad": false,
+  "variables_nuevas": [],
+  "healthchecks": [
+    {
+      "servicio": "web",
+      "url": "http://host.docker.internal:18080/",
+      "espera": 200,
+      "timeout_s": 60
+    }
+  ],
+  "changelog": "productos/demo/releases/2.0.0/changelog.md",
+  "plantilla_sha256": "a9838f93c29a3848bc66858ca7c97e766baec2178d343c8a5c71bc887dba358e"
+}

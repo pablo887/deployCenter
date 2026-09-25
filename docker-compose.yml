@@ -1,0 +1,100 @@
+# deployCenter hub para desarrollo y pruebas: API y web en http://localhost:8000
+#
+#   cp .env.ejemplo .env          # completá DB_PASSWORD y lo de Supabase
+#   docker compose up -d --build
+#
+# Arranca Postgres (perfil db-local), aplica las migraciones y levanta el hub.
+# La identidad es la de Supabase Auth: el login, el segundo factor y el JWKS
+# vienen del proyecto. Los roles viven en esta base, así que la primera persona
+# se da de alta por consola:
+#
+#   docker compose exec hub dc-hub usuario <uuid> --rol comercial --email vos@accusys.com.ar
+#
+# El uuid lo muestra la web al ingresar sin alta. Desde ahí, Comercial crea los
+# clientes y sus usuarios desde la web; Soporte, los agentes.
+#
+# Contra la base de Supabase en vez de la local: sacá db-local de
+# COMPOSE_PROFILES y poné su cadena de conexión en DC_HUB_DB (ver .env.ejemplo).
+#
+# Perfil agente-demo: un agente en esta misma máquina y un producto de prueba
+# (nginx) para ver un despliegue real, la verificación y la vuelta atrás. Los
+# pasos están en ejemplos/demo-agente/README.md.
+
+name: deploycenter-hub
+
+x-hub: &hub
+  build:
+    context: .
+    dockerfile: Dockerfile.hub
+  image: deploycenter/hub:dev
+  env_file: .env
+  environment:
+    DC_HUB_DB: ${DC_HUB_DB:-postgresql+psycopg://deploycenter:${DB_PASSWORD:-}@db:5432/deploycenter}
+    DC_HUB_CATALOGO_EXTRA: ${DC_HUB_CATALOGO_EXTRA:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    profiles: ["db-local"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: deploycenter
+      POSTGRES_USER: deploycenter
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?definí DB_PASSWORD en .env}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deploycenter -d deploycenter"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Aplica lo pendiente de supabase/migrations y termina. Es idempotente: corre
+  # en cada `up` sin tocar lo que ya está.
+  migrar:
+    <<: *hub
+    command: ["migrar"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+
+  hub:
+    <<: *hub
+    restart: unless-stopped
+    ports:
+      - "${DC_PUERTO:-8000}:8000"
+    depends_on:
+      migrar:
+        condition: service_completed_successfully
+
+  # Solo con el perfil agente-demo. Usa el Docker de esta máquina (el socket) para
+  # levantar el stack de la demo, que queda publicado en http://localhost:18080.
+  agente:
+    profiles: ["agente-demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: deploycenter/agente:dev
+    restart: unless-stopped
+    entrypoint: ["sh", "/demo/agente.sh"]
+    environment:
+      DC_HUB_URL: http://hub:8000
+      DC_AGENTE_CODIGO: ${DC_AGENTE_CODIGO:-}
+      DC_AGENTE_HOST: ${DC_AGENTE_HOST:-demo-01}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agente-stacks:/stacks
+      - agente-trabajo:/var/lib/deploycenter
+      - ./ejemplos/demo-agente/agente.sh:/demo/agente.sh:ro
+    depends_on:
+      hub:
+        condition: service_healthy
+
+volumes:
+  db:
+  agente-stacks:
+  agente-trabajo:

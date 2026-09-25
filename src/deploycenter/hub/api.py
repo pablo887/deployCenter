@@ -10,6 +10,10 @@ Dos puertas con credenciales distintas:
   usuarios, y lo vuelven a chequear las políticas RLS de la base. Sin validador
   configurado, esta puerta está cerrada.
 
+Con `web`, el hub sirve además el frontend estático en `/` y su configuración
+pública en `/config.json` (a qué proveedor de identidad hablarle). Mismo origen
+para la web y la API: no hace falta CORS.
+
 El long-poll es asíncrono: un agente esperando no ocupa un hilo, solo una
 corrutina que consulta la base una vez por segundo (la consulta sí va al pool
 de hilos, y dura milisegundos).
@@ -26,7 +30,9 @@ from . import servicio as srv
 ESPERA_MAXIMA_S = 30
 
 
-def crear_app(hub, validador=None, intervalo_poll_s=1.0):
+def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=None):
+    """`web` es la carpeta del frontend (o None para no servirlo) y `config_web`
+    lo que se publica en /config.json: nada secreto, lo lee cualquiera."""
     try:
         from fastapi import Depends, FastAPI, Header, Query, Request, Response
         from fastapi.concurrency import run_in_threadpool
@@ -148,6 +154,9 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0):
 
     Persona = Annotated[srv.Perfil, Depends(persona)]
 
+    if web is not None:
+        _cabeceras_web(app, config_web or {})
+
     # -- salud ------------------------------------------------------------------ #
 
     @app.get("/api/salud")
@@ -197,6 +206,14 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0):
     @app.get("/api/v1/yo")
     def yo(p: Persona):
         return p.a_dict()
+
+    @app.get("/api/v1/catalogo")
+    def catalogo(p: Persona):
+        return hub.catalogo_web(perfil=p)
+
+    @app.get("/api/v1/tenants")
+    def tenants(p: Persona):
+        return hub.tenants(perfil=p)
 
     @app.get("/api/v1/parque")
     def parque(p: Persona, tenant: str | None = None):
@@ -285,4 +302,40 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0):
                   limite: Annotated[int, Query(ge=1, le=500)] = 100):
         return hub.auditoria(perfil=p, tenant_id=tenant, limite=limite)
 
+    # -- frontend --------------------------------------------------------------- #
+    # va al final: lo que no es de la API cae en los archivos de la web
+
+    if web is not None:
+        from fastapi.staticfiles import StaticFiles
+
+        @app.get("/config.json")
+        def config():
+            return config_web or {}
+
+        app.mount("/", StaticFiles(directory=str(web), html=True), name="web")
+
     return app
+
+
+def _cabeceras_web(app, config_web):
+    """La web guarda el token de la sesión en el navegador: la CSP limita de dónde
+    puede cargar scripts (solo de acá) y a dónde puede conectarse (acá y al
+    proveedor de identidad)."""
+    conectar = " ".join(["'self'", *filter(None, [config_web.get("supabase_url")])])
+    csp = ("default-src 'self'; script-src 'self'; "
+           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+           "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; "
+           f"connect-src {conectar}; frame-ancestors 'none'; base-uri 'none'; "
+           "form-action 'none'")
+
+    @app.middleware("http")
+    async def _cabeceras(request, call_next):
+        respuesta = await call_next(request)
+        respuesta.headers.setdefault("X-Content-Type-Options", "nosniff")
+        respuesta.headers.setdefault("Referrer-Policy", "no-referrer")
+        if not request.url.path.startswith("/api/"):
+            respuesta.headers.setdefault("Content-Security-Policy", csp)
+            respuesta.headers.setdefault("X-Frame-Options", "DENY")
+            # la web cambia con cada versión del hub: que no quede una vieja en caché
+            respuesta.headers.setdefault("Cache-Control", "no-cache")
+        return respuesta

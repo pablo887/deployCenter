@@ -1,17 +1,22 @@
-/* deployCenter · mock web (vanilla JS, sin build).
-   Estado en memoria + localStorage. Nada se conecta a un backend real. */
+/* deployCenter · web (vanilla JS, sin build).
+   Dos modos. Servida por un hub (dc-hub servir): datos reales, identidad con
+   segundo factor y órdenes que ejecuta el agente (ver hub.js). Abierta sola:
+   maqueta con datos de ejemplo, estado en memoria + localStorage. */
 (function () {
   'use strict';
 
   const SEED = window.DC_SEED;
   const KEY = 'deploycenter-mock-v1';
   const AGENTE_ULTIMA = '1.3.0';
+  const HUB = window.DC_HUB;
+  let MODO = 'demo';       // 'hub' cuando la página la sirve un hub
 
   /* ============================================================
      Estado
      ============================================================ */
   let S = cargar() || nuevo();
   let DEP = null;          // despliegue en curso (runtime, no se persiste)
+  let DEPH = null;         // modo hub: la orden real que se está siguiendo
   let UI = { vista: '', inst: null, prod: null, tenantParam: null, prodRel: null, login: { user: 'u1', paso: 1 }, drawer: null, modal: null, filtroAud: { tenant: '', tipo: '' } };
 
   function nuevo() {
@@ -40,7 +45,7 @@
     return { version: rels[idx - 1].version, fecha: inst.ultimoDeploy.fecha };
   }
   function cargar() { try { const t = localStorage.getItem(KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
-  function guardar() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* sin storage: sigue en memoria */ } }
+  function guardar() { if (MODO === 'hub') return; try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* sin storage: sigue en memoria */ } }
 
   /* ============================================================
      Utilidades
@@ -54,6 +59,7 @@
   const ahora = () => `${S.hoy} ${hora().slice(0, 5)}`;
   const iniciales = n => n.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
   const AMB = { produccion: 'Producción', homologacion: 'Homologación' };
+  const amb = a => AMB[a] || esc(a);   // en el hub es el nombre que reporta el agente
   const ROLES = {
     lector: { nombre: 'Lector', lado: 'Cliente' }, operador: { nombre: 'Operador', lado: 'Cliente' }, aprobador: { nombre: 'Aprobador', lado: 'Cliente' },
     soporte: { nombre: 'Soporte', lado: 'Accusys' }, publicador: { nombre: 'Publicador', lado: 'Accusys' }, comercial: { nombre: 'Comercial', lado: 'Accusys' }
@@ -80,6 +86,7 @@
   const instsDe = t => S.instalaciones.filter(i => i.tenant === t);
 
   function mant(tprod) {
+    if (!tprod || !tprod.mantenimientoHasta) return { estado: 'sin-dato', dias: 0, pill: 'p-neutro', txt: 'Sin parametría' };
     const d = dias(S.hoy, tprod.mantenimientoHasta);
     if (d < 0) return { estado: 'vencido', dias: d, pill: 'p-crit', txt: `Vencido hace ${-d} días` };
     if (d <= 60) return { estado: 'por-vencer', dias: d, pill: 'p-warn', txt: `Vence en ${d} días` };
@@ -178,11 +185,11 @@
      ============================================================ */
   function render() {
     const app = $('#app');
-    if (!S.sesion) { app.innerHTML = vistaLogin(); return; }
+    if (!S.sesion) { app.innerHTML = MODO === 'hub' ? vistaLoginHub() : vistaLogin(); return; }
     const u = usuarioActual();
     const vistas = esAccusys() ? VISTAS_ACCUSYS : VISTAS_CLIENTE;
     let v = UI.vista;
-    if (!vistas[v] && !(v === 'instalacion' && UI.inst) && !(v === 'desplegar' && DEP) ) v = Object.keys(vistas)[0];
+    if (!vistas[v] && !(v === 'instalacion' && UI.inst) && !(v === 'desplegar' && (DEP || DEPH))) v = Object.keys(vistas)[0];
     if (v === 'instalacion' && esAccusys()) v = 'parque';
     UI.vista = v;
     const cuerpo = (VISTAS_EXTRA[v] || vistas[v]).render();
@@ -206,15 +213,16 @@
       `<a href="#${k}" class="${k === v || (v === 'instalacion' && k === 'instalaciones') || (v === 'desplegar' && k === 'catalogo') ? 'activo' : ''}">${x.icono}<span>${x.titulo}</span>${x.cuenta ? `<span class="cuenta">${x.cuenta()}</span>` : ''}</a>`).join('');
     return `
       <aside class="side">
-        <div class="marca"><span class="m">D</span><span class="n">deploy<i>Center</i></span></div>
+        <div class="marca"><span class="m">D</span><span class="n">deploy<i>Hub</i></span></div>
         <nav class="nav" aria-label="Principal">
           <div class="nav-titulo">${esAccusys() ? 'Accusys · interno' : 'Mi organización'}</div>
           ${items}
         </nav>
         <div class="side-pie">
+          ${MODO === 'hub' ? `<span>Conectado al hub</span><span><code>${esc(location.host)}</code></span>` : `
           <span>Mock navegable · datos ficticios</span>
           <span>hub <code>deploy.accusys.com.ar</code></span>
-          <span>${mails} mails en la bandeja de avisos</span>
+          <span>${mails} mails en la bandeja de avisos</span>`}
         </div>
       </aside>`;
   }
@@ -230,8 +238,8 @@
           <small>${t ? `Tenant <code>${t.id}</code> · ${t.estado === 'activo' ? 'activo' : 'suspendido'}` : 'Vista interna · todo el parque'}</small>
         </div>
         <div class="espacio"></div>
-        <button class="icono-btn" data-a="abrir-mails" aria-label="Avisos por mail">${I.mail}${n ? `<span class="punto">${n}</span>` : ''}</button>
-        <button class="usuario" data-a="abrir-usuarios" aria-label="Cambiar de usuario">
+        ${MODO === 'hub' ? '' : `<button class="icono-btn" data-a="abrir-mails" aria-label="Avisos por mail">${I.mail}${n ? `<span class="punto">${n}</span>` : ''}</button>`}
+        <button class="usuario" data-a="abrir-usuarios" aria-label="${MODO === 'hub' ? 'Tu sesión' : 'Cambiar de usuario'}">
           <span class="avatar">${iniciales(u.nombre)}</span>
           <span class="quien"><b>${esc(u.nombre)}</b><small>${ROLES[u.rol].nombre} · ${ROLES[u.rol].lado}</small></span>
         </button>
@@ -239,6 +247,7 @@
   }
 
   function bannerDep() {
+    if (MODO === 'hub') return bannerHub();
     if (!DEP || UI.vista === 'desplegar') return '';
     const u = usuarioActual();
     if (!u || !u.tenant || u.tenant !== inst(DEP.instId).tenant) return '';
@@ -248,7 +257,7 @@
       ejecutando: 'Despliegue en curso', fallo: `Verificación fallida · rollback en ${DEP.cuenta} s`, rollback: 'Rollback en curso', ok: 'Despliegue terminado', revertido: 'Rollback completado', retenido: 'Rollback cancelado: instalación en diagnóstico'
     }[DEP.fase] || 'Despliegue';
     const cls = DEP.fase === 'fallo' || DEP.fase === 'retenido' ? 'a-crit' : DEP.fase === 'ok' ? 'a-ok' : 'a-info';
-    return `<div style="padding:14px 28px 0"><div class="aviso ${cls}" style="align-items:center">${I.rocket}<div style="flex:1"><b>${txt}</b> · ${prod(i.producto).nombre} ${AMB[i.ambiente]} → ${DEP.version}. La ejecución es del agente: podés navegar tranquilo.</div><a class="btn btn-sec btn-chico" href="#desplegar">Ver</a></div></div>`;
+    return `<div style="padding:14px 28px 0"><div class="aviso ${cls}" style="align-items:center">${I.rocket}<div style="flex:1"><b>${txt}</b> · ${prod(i.producto).nombre} ${amb(i.ambiente)} → ${DEP.version}. La ejecución es del agente: podés navegar tranquilo.</div><a class="btn btn-sec btn-chico" href="#desplegar">Ver</a></div></div>`;
   }
 
   const misMails = () => { const u = usuarioActual(); return u ? S.mails.filter(m => !u.tenant || m.tenant === u.tenant) : []; };
@@ -279,21 +288,7 @@
       </div>`;
     return `
       <div class="login">
-        <section class="login-hero">
-          <div class="marca"><span class="m">D</span><span class="n">deploy<i>Center</i></span><span class="sub">CENTRO DE<br>RELEASES</span></div>
-          <div>
-            <h1>Releases y despliegue <span>autoservicio</span> para toda la línea</h1>
-            <p>MEP, Factnova, Pases &amp; CRyL, Repi, SML y CEDIN. Cada cliente ve lo que compró, corre el preflight en horario laboral y despliega con un click. Si la verificación falla, la plataforma vuelve atrás sola y avisa a las dos partes.</p>
-          </div>
-          <div class="flujo">
-            <span>Accusys publica</span><b>→</b><span>Aviso</span><b>→</b><span>Preflight</span><b>→</b><span>Despliegue</span><b>→</b><span>Verificación</span><b>→</b><span>OK / Rollback</span>
-          </div>
-          <div class="dominios">
-            <span>443/TCP saliente · deploy.accusys.com.ar</span>
-            <span>443/TCP saliente · auth.accusys.com.ar</span>
-            <span>443/TCP saliente · registry.accusys.com.ar</span>
-          </div>
-        </section>
+        ${heroLogin()}
         <section class="login-form">
           <img class="logo-accusys" src="accusys.png" alt="Accusys">
           <div class="pila" style="gap:6px">
@@ -307,6 +302,14 @@
           </div>
         </section>
       </div>`;
+  }
+
+  function heroLogin() {
+    return `
+        <section class="login-hero">
+          <div class="marca"><span class="m">D</span><span class="n">deploy<i>Hub</i></span><span class="sub">CENTRO DE<br>RELEASES</span></div>
+          <h1>Releases y despliegue <span>autoservicio</span></h1>
+        </section>`;
   }
 
   /* ============================================================
@@ -346,11 +349,11 @@
         <article class="panel inst" data-a="ver-inst" data-id="${i.id}" tabindex="0">
           <div class="inst-cab">
             <span class="tag-prod">${p.codigo}</span>
-            <div class="t"><h3>${p.nombre}</h3><div class="amb">${AMB[i.ambiente]} · <code>${esc(ag.host)}</code></div></div>
+            <div class="t"><h3>${p.nombre}</h3><div class="amb">${amb(i.ambiente)} · <code>${esc(ag.host)}</code></div></div>
           </div>
           <div class="version-grande"><b>${esc(i.version)}</b>${estado}</div>
           <dl class="datos">
-            <dt>Último despliegue</dt><dd class="num">${esc(i.ultimoDeploy.fecha)} · ${esc(i.ultimoDeploy.por)}</dd>
+            <dt>Último despliegue</dt><dd class="num">${i.ultimoDeploy.fecha ? `${esc(i.ultimoDeploy.fecha)} · ${esc(i.ultimoDeploy.por)}` : '<span class="suave">sin registro</span>'}</dd>
             <dt>Agente</dt><dd>${ag.estado === 'online' ? `En línea · ${ag.visto}` : `Sin contacto · ${ag.visto}`}</dd>
             <dt>Mantenimiento</dt><dd><span class="pill ${m.pill}">${fecha(tpr.mantenimientoHasta)}</span></dd>
           </dl>
@@ -381,7 +384,7 @@
     const i = inst(UI.inst);
     const p = prod(i.producto), ag = agente(i.agente), r = rel(i.producto, i.version), tpr = tp(i.tenant, i.producto), m = mant(tpr);
     const vecinos = S.instalaciones.filter(x => x.agente === i.agente && x.id !== i.id);
-    const servicios = Object.entries(r.imagenes).map(([k, d]) => {
+    const servicios = !r ? '<tr><td colspan="3" class="suave">La versión instalada no está en el catálogo del hub.</td></tr>' : Object.entries(r.imagenes).map(([k, d]) => {
       const falla = i.estado === 'retenido' && k === Object.keys(r.imagenes).slice(-1)[0];
       return `<tr><td><b>${p.id}-${k}</b></td><td><code>registry.accusys.com.ar/${p.id}/${k}@${esc(d)}</code></td><td>${falla ? '<span class="pill p-crit">unhealthy</span>' : '<span class="pill p-ok">healthy</span>'}</td></tr>`;
     }).join('');
@@ -389,9 +392,9 @@
     const vars = Object.keys(i.variables);
     const pe = puedeEjecutar();
     return `
-      <div class="migas"><a href="#instalaciones">Mis instalaciones</a><span>/</span><span>${p.nombre} · ${AMB[i.ambiente]}</span></div>
+      <div class="migas"><a href="#instalaciones">Mis instalaciones</a><span>/</span><span>${p.nombre} · ${amb(i.ambiente)}</span></div>
       <div class="cabecera">
-        <div class="t"><span class="eyebrow">${p.desc}</span><h1>${p.nombre} ${esc(i.version)} · ${AMB[i.ambiente]}</h1>
+        <div class="t"><span class="eyebrow">${p.desc}</span><h1>${p.nombre} ${esc(i.version)} · ${amb(i.ambiente)}</h1>
         <p>Stack en <code>/opt/accusys/${p.id}</code> sobre <code>${esc(ag.host)}</code>. ${vecinos.length ? `El mismo agente atiende también ${vecinos.map(v => prod(v.producto).nombre).join(', ')}; cada stack tiene su propio punto de retorno.` : ''}</p></div>
         <div class="fila">
           ${i.puntoRetorno ? `<button class="btn btn-sec" data-a="pedir-rollback" data-id="${i.id}" ${pe.ok ? '' : 'disabled title="' + esc(pe.motivo) + '"'}>${I.undo} Volver a ${esc(i.puntoRetorno.version)}</button>` : ''}
@@ -402,7 +405,7 @@
       <div class="grid g3">
         <div class="panel kpi"><span class="l">Agente</span><span class="v" style="font-size:1.15rem;padding-top:6px">${ag.estado === 'online' ? '<span class="pill p-ok">En línea</span>' : '<span class="pill p-crit">Fuera de línea</span>'}</span><span class="d">deploy-agent ${ag.version} · último contacto ${ag.visto}</span></div>
         <div class="panel kpi"><span class="l">Mantenimiento</span><span class="v" style="font-size:1.15rem;padding-top:6px"><span class="pill ${m.pill}">${m.txt}</span></span><span class="d">hasta el ${fecha(tpr.mantenimientoHasta)} · canal ${tpr.canal}</span></div>
-        <div class="panel kpi"><span class="l">Punto de retorno</span><span class="v" style="font-size:1.15rem;padding-top:6px">${i.puntoRetorno ? esc(i.puntoRetorno.version) : '—'}</span><span class="d">${i.puntoRetorno ? 'compose + digests guardados el ' + esc(i.puntoRetorno.fecha) : 'la versión instalada trajo migración'}</span></div>
+        <div class="panel kpi"><span class="l">Punto de retorno</span><span class="v" style="font-size:1.15rem;padding-top:6px">${i.puntoRetorno ? esc(i.puntoRetorno.version) : '—'}</span><span class="d">${i.puntoRetorno ? 'compose + digests guardados' + (i.puntoRetorno.fecha ? ' el ' + esc(i.puntoRetorno.fecha) : '') : 'la versión instalada trajo migración'}</span></div>
       </div>
       <div class="grid g2">
         <section class="panel">
@@ -425,6 +428,7 @@
 
   function vCatalogo() {
     const u = usuarioActual(), t = tenant(u.tenant);
+    if (!t.productos.length) return `<div class="cabecera"><div class="t"><span class="eyebrow">Catálogo</span><h1>Versiones de tus productos</h1></div></div><div class="panel vacio">Tu organización todavía no tiene productos cargados. Los carga Comercial de Accusys.</div>`;
     if (!UI.prod || !tp(t.id, UI.prod)) UI.prod = t.productos[0].producto;
     const insts = instsDe(t.id).filter(i => i.producto === UI.prod);
     if (!UI.inst || !insts.find(i => i.id === UI.inst)) UI.inst = insts[0] && insts[0].id;
@@ -458,7 +462,7 @@
     }).join('');
     const selInst = insts.length > 1 ? `
       <div class="campo" style="min-width:240px"><label for="cat-inst">Instalación</label>
-        <select id="cat-inst" data-f="cat-inst">${insts.map(x => `<option value="${x.id}" ${x.id === UI.inst ? 'selected' : ''}>${AMB[x.ambiente]} · ${esc(x.version)} · ${esc(agente(x.agente).host)}</option>`).join('')}</select>
+        <select id="cat-inst" data-f="cat-inst">${insts.map(x => `<option value="${x.id}" ${x.id === UI.inst ? 'selected' : ''}>${amb(x.ambiente)} · ${esc(x.version)} · ${esc(agente(x.agente).host)}</option>`).join('')}</select>
       </div>` : '';
     return `
       <div class="cabecera"><div class="t">
@@ -467,7 +471,7 @@
       </div></div>
       <div class="tabs" role="tablist">${tabs}</div>
       <div class="grid g3" style="align-items:end">
-        <div class="panel kpi"><span class="l">${p.nombre} instalada</span><span class="v">${esc(i.version)}</span><span class="d">${AMB[i.ambiente]} · ${esc(agente(i.agente).host)}</span></div>
+        <div class="panel kpi"><span class="l">${p.nombre} instalada</span><span class="v">${esc(i.version)}</span><span class="d">${amb(i.ambiente)} · ${esc(agente(i.agente).host)}</span></div>
         <div class="panel kpi"><span class="l">Mantenimiento</span><span class="v" style="font-size:1.15rem;padding-top:6px"><span class="pill ${m.pill}">${m.txt}</span></span><span class="d">hasta el ${fecha(tpr.mantenimientoHasta)} · autoservicio ${tpr.autoservicio ? 'habilitado' : 'deshabilitado'}</span></div>
         ${selInst || `<div class="panel kpi"><span class="l">Canal</span><span class="v" style="font-size:1.15rem;padding-top:6px">${tpr.canal === 'anticipado' ? 'Anticipado' : 'Estable'}</span><span class="d">${tpr.canal === 'anticipado' ? 'recibís release candidates' : 'solo versiones estables'}</span></div>`}
       </div>
@@ -485,11 +489,11 @@
 
   function tablaHistorial(hist, conProducto) {
     if (!hist.length) return '<div class="vacio">Todavía no hay operaciones registradas.</div>';
-    const res = { ok: '<span class="pill p-ok">Verificado</span>', rollback: '<span class="pill p-warn">Rollback automático</span>', manual: '<span class="pill p-info">Rollback manual</span>', retenido: '<span class="pill p-crit">Falló · retenido</span>' };
+    const res = { ok: '<span class="pill p-ok">Verificado</span>', rollback: '<span class="pill p-warn">Rollback automático</span>', manual: '<span class="pill p-info">Rollback manual</span>', retenido: '<span class="pill p-crit">Falló · retenido</span>', error: '<span class="pill p-crit">Falló</span>', en_curso: '<span class="pill p-info">En curso</span>', cancelada: '<span class="pill p-neutro">Retirada</span>' };
     return `<div class="tabla-wrap"><table><thead><tr><th>Fecha</th>${conProducto ? '<th>Producto</th>' : ''}<th>Operación</th><th>Versión</th><th>Resultado</th><th>Por</th><th>Duración</th></tr></thead><tbody>
       ${hist.map(h => `<tr class="click" data-a="ver-log" data-id="${h.id}">
         <td class="num">${esc(h.fecha)}</td>
-        ${conProducto ? `<td><span class="tag-prod">${prod(h.producto).codigo}</span> <span class="suave chico">${AMB[h.ambiente]}</span></td>` : ''}
+        ${conProducto ? `<td><span class="tag-prod">${prod(h.producto).codigo}</span> <span class="suave chico">${amb(h.ambiente)}</span></td>` : ''}
         <td>${esc(h.tipo)}</td><td class="num"><code>${esc(h.desde)} → ${esc(h.hacia)}</code></td>
         <td>${res[h.resultado] || esc(h.resultado)}</td><td>${esc(h.por)}</td><td class="num">${esc(h.duracion)}</td></tr>`).join('')}
     </tbody></table></div>`;
@@ -502,18 +506,18 @@
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Usuarios y roles</span><h1>Quién puede hacer qué en ${esc(t.nombre)}</h1>
       <p>El despliegue lo opera tu organización. Los roles aplican solo dentro de tu tenant.</p></div>
-      <button class="btn btn-pri" data-a="invitar" ${admin ? '' : 'disabled title="Solo un Aprobador administra usuarios"'}>${I.plus} Invitar usuario</button></div>
+      <button class="btn btn-pri" data-a="invitar" ${admin ? '' : 'disabled title="Solo un Aprobador administra usuarios"'}>${I.plus} ${MODO === 'hub' ? 'Dar de alta' : 'Invitar usuario'}</button></div>
       <section class="panel"><div class="tabla-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th>Segundo factor</th><th></th></tr></thead><tbody>
         ${us.map(x => `<tr><td><b>${esc(x.nombre)}</b><span class="sub">${esc(x.email)}</span></td>
           <td>${admin && x.id !== u.id ? `<select data-f="rol-usuario" data-id="${x.id}" aria-label="Rol de ${esc(x.nombre)}">${['lector', 'operador', 'aprobador'].map(r => `<option value="${r}" ${x.rol === r ? 'selected' : ''}>${ROLES[r].nombre}</option>`).join('')}</select>` : `<span class="pill p-info sin-punto">${ROLES[x.rol].nombre}</span>`}</td>
-          <td><span class="pill p-ok">TOTP activo</span></td><td class="suave chico">${x.id === u.id ? 'Sos vos' : ''}</td></tr>`).join('')}
+          <td><span class="pill p-ok">${MODO === 'hub' ? 'TOTP obligatorio' : 'TOTP activo'}</span></td><td class="suave chico">${x.id === u.id ? 'Sos vos' : ''}</td></tr>`).join('')}
       </tbody></table></div></section>
       <div class="grid g3">
         <div class="panel panel-cuerpo pila"><h3>Lector</h3><p class="suave chico">Ve catálogo, estado, historial y changelog. No ejecuta nada.</p></div>
         <div class="panel panel-cuerpo pila"><h3>Operador</h3><p class="suave chico">Corre el preflight, carga variables, despliega y puede cancelar un rollback en curso.</p></div>
         <div class="panel panel-cuerpo pila"><h3>Aprobador</h3><p class="suave chico">Habilita órdenes cuando hay doble aprobación y administra usuarios. No ejecuta despliegues.</p></div>
       </div>
-      <div class="aviso a-info">${I.shield}<div><b>Doble aprobación: ${t.dobleAprobacion ? 'activada' : 'desactivada'}.</b> ${t.dobleAprobacion ? 'Cada orden queda pendiente hasta que la autorice un segundo usuario con rol Aprobador.' : 'Un Operador puede ejecutar sin una segunda firma. Lo configura Accusys a pedido de tu organización.'}</div></div>`;
+      ${MODO === 'hub' ? panelHabilitaciones(t, admin) : `<div class="aviso a-info">${I.shield}<div><b>Doble aprobación: ${t.dobleAprobacion ? 'activada' : 'desactivada'}.</b> ${t.dobleAprobacion ? 'Cada orden queda pendiente hasta que la autorice un segundo usuario con rol Aprobador.' : 'Un Operador puede ejecutar sin una segunda firma. Lo configura Accusys a pedido de tu organización.'}</div></div>`}`;
   }
 
   /* ============================================================
@@ -575,6 +579,7 @@
   }
 
   function vDesplegar() {
+    if (MODO === 'hub') return vOrdenHub();
     if (!DEP) return `<div class="vacio">No hay ningún despliegue en curso. Elegí una versión desde el <a href="#catalogo">catálogo</a>.</div>`;
     const i = inst(DEP.instId), p = prod(i.producto), r = rel(i.producto, DEP.version), t = tenant(i.tenant), ag = agente(i.agente);
     const pi = pasoIdx(DEP.fase);
@@ -613,7 +618,7 @@
           <div class="panel-cab"><div><h2>Confirmá el despliegue</h2><p>Todo lo lento ya pasó: las imágenes están descargadas y verificadas contra su digest.</p></div></div>
           <div class="panel-cuerpo pila">
             <dl class="datos">
-              <dt>Instalación</dt><dd>${p.nombre} · ${AMB[i.ambiente]} · <code>${esc(ag.host)}</code></dd>
+              <dt>Instalación</dt><dd>${p.nombre} · ${amb(i.ambiente)} · <code>${esc(ag.host)}</code></dd>
               <dt>Versión</dt><dd class="num"><code>${esc(i.version)} → ${esc(r.version)}</code></dd>
               <dt>Punto de retorno</dt><dd>compose vigente + digests actuales, antes de tocar nada</dd>
               <dt>Verificación</dt><dd>healthcheck HTTP de ${Object.keys(r.imagenes).join(', ')} · timeout 120 s · smoke tests</dd>
@@ -664,14 +669,14 @@
     }
 
     if (DEP.manual) return `
-      <div class="migas"><a href="#instalaciones">Mis instalaciones</a><span>/</span><span>${p.nombre} · ${AMB[i.ambiente]}</span></div>
+      <div class="migas"><a href="#instalaciones">Mis instalaciones</a><span>/</span><span>${p.nombre} · ${amb(i.ambiente)}</span></div>
       <div class="cabecera"><div class="t"><span class="eyebrow">Rollback manual</span><h1>${p.nombre} ${esc(DEP.version)} → ${esc(DEP.desde)}</h1>
-        <p>${AMB[i.ambiente]} en <code>${esc(ag.host)}</code>. Se restaura el punto de retorno registrado, identificado por digest.</p></div></div>
+        <p>${amb(i.ambiente)} en <code>${esc(ag.host)}</code>. Se restaura el punto de retorno registrado, identificado por digest.</p></div></div>
       ${ejec}`;
     return `
       <div class="migas"><a href="#catalogo">Catálogo</a><span>/</span><span>${p.nombre} ${esc(r.version)}</span></div>
       <div class="cabecera"><div class="t"><span class="eyebrow">Despliegue autoservicio</span><h1>${p.nombre} ${esc(DEP.desde)} → ${esc(r.version)}</h1>
-        <p>${AMB[i.ambiente]} en <code>${esc(ag.host)}</code>. La ejecución es del agente, no del navegador: si cerrás esta pestaña, sigue igual.</p></div></div>
+        <p>${amb(i.ambiente)} en <code>${esc(ag.host)}</code>. La ejecución es del agente, no del navegador: si cerrás esta pestaña, sigue igual.</p></div></div>
       <div class="panel panel-cuerpo"><div class="stepper">${stepper}</div></div>
       ${pi <= 2 ? `<div class="grid g2" style="align-items:start">
         <section class="panel"><div class="panel-cab"><div><h2>Preflight</h2><p>Sin tocar el sistema en funcionamiento.</p></div>${DEP.fase === 'preflight' ? '<span class="pill p-info">Corriendo</span>' : DEP.fase === 'variables' ? '<span class="pill p-crit">Falló</span>' : '<span class="pill p-ok">Aprobado</span>'}</div><div class="panel-cuerpo checks">${checks}</div></section>
@@ -709,7 +714,7 @@
       { t: 'Cierre', d: 'resultado y logs al hub, mail a las dos partes', estado: 'esperando' }
     ];
     const P = DEP.pasoEj;
-    mail(i.tenant, `Inicio de despliegue · ${p.nombre} ${r.version} en ${AMB[i.ambiente]}`, `Operador: ${usuarioActual().nombre}.`);
+    mail(i.tenant, `Inicio de despliegue · ${p.nombre} ${r.version} en ${amb(i.ambiente)}`, `Operador: ${usuarioActual().nombre}.`);
     render();
     const script = [
       { fn: () => P[0].estado = 'corriendo', t: `orden ${DEP.orden} recibida por deploy-agent ${ag.version} (${ag.host})`, c: 'info', ms: 300 },
@@ -757,7 +762,7 @@
     i.version = r.version; i.estado = 'ok';
     i.ultimoDeploy = { fecha: ahora(), por: usuarioActual().nombre };
     S.historial.unshift({ id: 'h' + Date.now(), fecha: ahora(), tenant: i.tenant, producto: i.producto, ambiente: i.ambiente, tipo: 'Despliegue', desde, hacia: r.version, resultado: 'ok', por: usuarioActual().nombre, duracion: durDep(), logs: DEP.logs.slice() });
-    mail(i.tenant, `Despliegue verificado · ${p.nombre} ${r.version} en ${AMB[i.ambiente]}`, `Desde ${desde}. Punto de retorno registrado.`, 'soporte@accusys.example');
+    mail(i.tenant, `Despliegue verificado · ${p.nombre} ${r.version} en ${amb(i.ambiente)}`, `Desde ${desde}. Punto de retorno registrado.`, 'soporte@accusys.example');
     DEP.fase = 'ok';
     guardar(); refrescarDep();
     toast(`${p.nombre} ${r.version} desplegada y verificada`);
@@ -852,9 +857,9 @@
     const cols = S.productos.map(p => `<th style="text-align:center">${p.nombre}</th>`).join('');
     const filas = S.tenants.map(t => `<tr><td><b>${esc(t.nombre)}</b><span class="sub">${t.estado === 'activo' ? 'activo' : 'suspendido'}${t.dobleAprobacion ? ' · doble aprobación' : ''}</span></td>
       ${S.productos.map(p => {
-        const is = S.instalaciones.filter(i => i.tenant === t.id && i.producto === p.id && i.ambiente === 'produccion');
+        const is = S.instalaciones.filter(i => i.tenant === t.id && i.producto === p.id);
         if (!is.length) return '<td><span class="celda na">—</span></td>';
-        const i = is[0], ag = agente(i.agente), a = atraso(i);
+        const i = is.find(x => x.ambiente === 'produccion') || is[0], ag = agente(i.agente), a = atraso(i);
         let c = 'al-dia', s = 'al día';
         if (ag.estado !== 'online') { c = 'offline'; s = 'agente caído'; }
         else if (i.estado === 'retenido') { c = 'offline'; s = 'con fallo'; }
@@ -866,14 +871,15 @@
     const porVer = {};
     mep.forEach(i => porVer[i.version] = (porVer[i.version] || 0) + 1);
     const vers = Object.keys(porVer).sort(cmpV).reverse();
-    const maxN = Math.max(...Object.values(porVer));
+    const maxN = Math.max(1, ...Object.values(porVer));
+    const ueMep = ultimaEstable('mep');
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Tablero de parque</span><h1>Qué corre cada cliente, en una pantalla</h1>
       <p>Producción de cada cliente por producto. El atraso se cuenta en releases estables respecto de la última publicada.</p></div></div>
       <div class="grid g4">
         <div class="panel kpi"><span class="l">Clientes</span><span class="v">${S.tenants.filter(t => t.estado === 'activo').length}<span class="suave" style="font-size:1rem"> / ${S.tenants.length}</span></span><span class="d">activos · ${S.tenants.filter(t => t.estado !== 'activo').length} suspendido</span></div>
         <div class="panel kpi"><span class="l">Instalaciones</span><span class="v">${insts.length}</span><span class="d">${S.agentes.length} agentes enrolados</span></div>
-        <div class="panel kpi"><span class="l">En última o anteúltima</span><span class="v">${Math.round(alDia / insts.length * 100)}%</span><span class="d">meta ≥ 90% a seis meses del piloto</span></div>
+        <div class="panel kpi"><span class="l">En última o anteúltima</span><span class="v">${insts.length ? Math.round(alDia / insts.length * 100) + '%' : '—'}</span><span class="d">meta ≥ 90% a seis meses del piloto</span></div>
         <div class="panel kpi"><span class="l">Agentes fuera de línea</span><span class="v" style="color:${offline ? 'var(--rojo)' : 'inherit'}">${offline}</span><span class="d">botón de despliegue bloqueado</span></div>
       </div>
       <section class="panel">
@@ -891,7 +897,7 @@
         <section class="panel">
           <div class="panel-cab"><h2>Versiones de MEP en el parque</h2><span class="suave chico">${mep.length} instalaciones · prod y homo</span></div>
           <div class="panel-cuerpo pila">
-            ${vers.map(v => `<div class="barra-h"><code>${esc(v)}</code><span class="track"><i style="width:${porVer[v] / maxN * 100}%;background:${v === ultimaEstable('mep').version ? 'var(--verde)' : v.includes('-') ? 'var(--violeta)' : cmpV(v, '4.6.0') >= 0 ? 'var(--azul)' : 'var(--naranja)'}"></i></span><span class="num" style="text-align:right">${porVer[v]}</span></div>`).join('')}
+            ${vers.map(v => `<div class="barra-h"><code>${esc(v)}</code><span class="track"><i style="width:${porVer[v] / maxN * 100}%;background:${ueMep && v === ueMep.version ? 'var(--verde)' : v.includes('-') ? 'var(--violeta)' : cmpV(v, '4.6.0') >= 0 ? 'var(--azul)' : 'var(--naranja)'}"></i></span><span class="num" style="text-align:right">${porVer[v]}</span></div>`).join('')}
           </div>
         </section>
       </div>`;
@@ -900,51 +906,74 @@
   function vParametria() {
     const u = usuarioActual();
     const edita = u.rol === 'comercial';
-    if (!UI.tenantParam) UI.tenantParam = S.tenants[0].id;
+    const hub = MODO === 'hub';
+    const nuevoCliente = hub && edita ? `<button class="btn btn-pri" data-a="nuevo-cliente">${I.plus} Nuevo cliente</button>` : '';
+    if (!S.tenants.length) return `<div class="cabecera"><div class="t"><span class="eyebrow">Parametría comercial</span><h1>Todavía no hay clientes</h1></div>${nuevoCliente}</div>`;
+    if (!tenant(UI.tenantParam)) UI.tenantParam = S.tenants[0].id;
     const t = tenant(UI.tenantParam);
     const dis = edita ? '' : 'disabled';
-    const lista = S.tenants.map(x => `<button class="${x.id === t.id ? 'activo' : ''}" data-a="param-t" data-id="${x.id}"><span><b>${esc(x.nombre)}</b><small>${x.productos.map(p => prod(p.producto).nombre).join(' · ')}</small></span>${x.estado === 'suspendido' ? '<span class="pill p-crit sin-punto">Susp.</span>' : ''}</button>`).join('');
+    const lista = S.tenants.map(x => `<button class="${x.id === t.id ? 'activo' : ''}" data-a="param-t" data-id="${x.id}"><span><b>${esc(x.nombre)}</b><small>${x.productos.map(p => prod(p.producto).nombre).join(' · ') || 'sin productos'}</small></span>${x.estado === 'suspendido' ? '<span class="pill p-crit sin-punto">Susp.</span>' : ''}</button>`).join('');
     const noTiene = S.productos.filter(p => !tp(t.id, p.id));
+    // en el hub, lo que todavía no se guarda (ambientes, doble aprobación, avisos) no se muestra
     const prods = t.productos.map(p => {
       const m = mant(p);
-      return `<div class="prod-param">
+      return `<div class="prod-param${hub ? ' tres' : ''}">
         <div class="cab"><span class="tag-prod">${prod(p.producto).codigo}</span><h3>${prod(p.producto).nombre}</h3><span class="pill ${m.pill}">${m.txt}</span></div>
-        <div class="campo"><label for="mh-${p.producto}">Mantenimiento hasta</label><input type="date" id="mh-${p.producto}" data-f="param" data-p="${p.producto}" data-k="mantenimientoHasta" value="${p.mantenimientoHasta}" ${dis}></div>
+        <div class="campo"><label for="mh-${p.producto}">Mantenimiento hasta</label><input type="date" id="mh-${p.producto}" data-f="param" data-p="${p.producto}" data-k="mantenimientoHasta" value="${p.mantenimientoHasta || ''}" ${dis}></div>
         <div class="campo"><label for="cn-${p.producto}">Canal</label><select id="cn-${p.producto}" data-f="param" data-p="${p.producto}" data-k="canal" ${dis}><option value="estable" ${p.canal === 'estable' ? 'selected' : ''}>Estable</option><option value="anticipado" ${p.canal === 'anticipado' ? 'selected' : ''}>Anticipado</option></select></div>
-        <div class="campo"><span class="lbl">Ambientes</span><div class="fila">${['produccion', 'homologacion'].map(a => `<label class="check"><input type="checkbox" data-f="param-amb" data-p="${p.producto}" value="${a}" ${p.ambientes.includes(a) ? 'checked' : ''} ${dis}> ${AMB[a]}</label>`).join('')}</div></div>
+        ${hub ? '' : `<div class="campo"><span class="lbl">Ambientes</span><div class="fila">${['produccion', 'homologacion'].map(a => `<label class="check"><input type="checkbox" data-f="param-amb" data-p="${p.producto}" value="${a}" ${p.ambientes.includes(a) ? 'checked' : ''} ${dis}> ${amb(a)}</label>`).join('')}</div></div>`}
         <div class="campo"><span class="lbl">Autoservicio</span><label class="switch"><input type="checkbox" data-f="param" data-p="${p.producto}" data-k="autoservicio" ${p.autoservicio ? 'checked' : ''} ${dis}> ${p.autoservicio ? 'Habilitado' : 'Lo despliega Accusys'}</label></div>
       </div>`;
-    }).join('');
+    }).join('') || '<div class="vacio">Todavía no tiene productos adquiridos.</div>';
+
+    const us = S.usuarios.filter(x => x.tenant === t.id);
+    const usuarios = `<section class="panel">
+        <div class="panel-cab"><div><h2>Usuarios</h2><p>${us.length ? `${us.length} con acceso a ${esc(t.nombre)}` : 'Nadie tiene acceso todavía'}</p></div>
+          ${hub && edita ? `<button class="btn btn-sec btn-chico" data-a="alta-usuario-tenant">${I.plus} Alta de usuario</button>` : ''}</div>
+        ${us.length ? `<div class="tabla-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th></tr></thead><tbody>${us.map(x => `<tr>
+          <td><b>${esc(x.nombre)}</b><span class="sub">${esc(x.email)}</span></td>
+          <td>${hub && edita ? `<select data-f="rol-usuario" data-id="${x.id}" aria-label="Rol de ${esc(x.nombre)}" style="width:auto">${['lector', 'operador', 'aprobador'].map(r => `<option value="${r}" ${x.rol === r ? 'selected' : ''}>${ROLES[r].nombre}</option>`).join('')}</select>` : `<span class="pill p-info sin-punto">${ROLES[x.rol].nombre}</span>`}</td></tr>`).join('')}</tbody></table></div>`
+          : `<div class="vacio">Dale de alta al Aprobador del cliente: después él administra al resto.</div>`}
+      </section>`;
+
+    const ags = S.agentes.filter(a => a.tenant === t.id);
+    const est = { online: '<span class="pill p-ok">En línea</span>', offline: '<span class="pill p-crit">Fuera de línea</span>', revocado: '<span class="pill p-neutro">Revocado</span>', pendiente: '<span class="pill p-warn">Esperando canje</span>' };
+    const parque = `<section class="panel">
+        <div class="panel-cab"><h3>Servidores</h3><span class="suave chico">${instsDe(t.id).length === 1 ? '1 instalación' : instsDe(t.id).length + ' instalaciones'}</span></div>
+        ${ags.length ? `<div class="lista-agentes">${ags.map(a => `<div><span><code>${esc(a.host)}</code><small>${S.instalaciones.filter(i => i.agente === a.id).map(i => prod(i.producto).codigo).join(' · ') || 'sin stacks'} · ${esc(a.visto)}</small></span>${est[a.estado] || ''}</div>`).join('')}</div>`
+          : '<div class="vacio chico">Sin agentes enrolados. Los enrola Soporte con un código de un solo uso.</div>'}
+      </section>`;
+    const registry = `<section class="panel panel-cuerpo pila">
+        <h3>Credencial del registry</h3>
+        <div class="cmd">robot$${t.id}-pull  (solo lectura)\n${t.productos.map(p => `  ✓ registry.accusys.com.ar/${p.producto}/*`).join('\n')}${noTiene.length ? '\n' + noTiene.map(p => `  ✕ registry.accusys.com.ar/${p.id}/*`).join('\n') : ''}</div>
+        <span class="suave chico">Aunque alguien saltee la web, no descarga lo que no compró.</span>
+      </section>`;
+    const avisos = hub ? '' : `<section class="panel panel-cuerpo pila">
+        <h3>Destinatarios de aviso</h3>
+        <textarea rows="3" data-f="tenant" data-k="avisos" aria-label="Destinatarios de aviso" ${dis}>${esc(t.avisos.join('\n'))}</textarea>
+        <span class="suave chico">Reciben versión nueva, inicio, fallo, rollback y vencimientos.</span>
+      </section>`;
+
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Parametría comercial</span><h1>Qué compró cada cliente, y hasta cuándo</h1>
-      <p>Gobierna lo que la plataforma habilita. Se aplica en la web y también en el registry: la credencial de cada cliente alcanza solo los repos de sus productos.</p></div></div>
-      ${edita ? '' : `<div class="aviso a-info">${I.info}<div>Estás como <b>${ROLES[u.rol].nombre}</b>: la parametría la edita el rol Comercial. Cambiá de usuario arriba a la derecha para probarlo.</div></div>`}
-      <div class="dos-col">
+      <p>Gobierna lo que la plataforma habilita, en la web y en el registry.</p></div>${nuevoCliente}</div>
+      ${edita ? '' : `<div class="aviso a-info">${I.info}<div>Estás como <b>${ROLES[u.rol].nombre}</b>: la parametría la edita el rol Comercial.${hub ? '' : ' Cambiá de usuario arriba a la derecha para probarlo.'}</div></div>`}
+      <div class="param-cols">
         <section class="panel"><div class="lista-t">${lista}</div></section>
         <div class="pila">
           <section class="panel">
-            <div class="panel-cab"><div><h2>${esc(t.nombre)}</h2><p>Tenant <code>${t.id}</code> · ${instsDe(t.id).length} instalaciones</p></div>
+            <div class="panel-cab"><div><h2>${esc(t.nombre)}</h2><p>Tenant <code>${esc(t.id)}</code></p></div>
               <div class="fila">
-                <label class="switch"><input type="checkbox" data-f="tenant" data-k="dobleAprobacion" ${t.dobleAprobacion ? 'checked' : ''} ${dis}> Doble aprobación</label>
+                ${hub ? '' : `<label class="switch"><input type="checkbox" data-f="tenant" data-k="dobleAprobacion" ${t.dobleAprobacion ? 'checked' : ''} ${dis}> Doble aprobación</label>`}
                 <select data-f="tenant" data-k="estado" aria-label="Estado del cliente" style="width:auto" ${dis}><option value="activo" ${t.estado === 'activo' ? 'selected' : ''}>Activo</option><option value="suspendido" ${t.estado === 'suspendido' ? 'selected' : ''}>Suspendido</option></select>
               </div>
             </div>
             ${prods}
             ${edita && noTiene.length ? `<div class="panel-cuerpo fila" style="border-top:1px solid var(--linea)"><select id="nuevo-prod" style="width:auto" aria-label="Producto a agregar">${noTiene.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('')}</select><button class="btn btn-sec btn-chico" data-a="agregar-prod">${I.plus} Agregar producto adquirido</button></div>` : ''}
           </section>
-          <div class="grid g2">
-            <section class="panel panel-cuerpo pila">
-              <h3>Destinatarios de aviso</h3>
-              <textarea rows="3" data-f="tenant" data-k="avisos" aria-label="Destinatarios de aviso" ${dis}>${esc(t.avisos.join('\n'))}</textarea>
-              <span class="suave chico">Reciben versión nueva, inicio, fallo, rollback y vencimientos.</span>
-            </section>
-            <section class="panel panel-cuerpo pila">
-              <h3>Credencial del registry</h3>
-              <div class="cmd">robot$${t.id}-pull  (solo lectura)\n${t.productos.map(p => `  ✓ registry.accusys.com.ar/${p.producto}/*`).join('\n')}\n${noTiene.map(p => `  ✕ registry.accusys.com.ar/${p.id}/*`).join('\n')}</div>
-              <span class="suave chico">Se recalcula al guardar. Aunque alguien saltee la web, no descarga lo que no compró.</span>
-            </section>
-          </div>
+          ${hub ? usuarios : ''}
         </div>
+        <div class="pila param-lado">${parque}${registry}${avisos}</div>
       </div>`;
   }
 
@@ -964,19 +993,19 @@
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Releases</span><h1>Catálogo de versiones por producto</h1>
       <p>Cada release es un manifiesto firmado: imágenes por digest, variables nuevas, healthchecks y ruta de upgrade. Mismo formato para los seis productos.</p></div>
-      <button class="btn btn-pri" data-a="publicar" ${u.rol === 'publicador' ? '' : 'disabled title="Solo el rol Publicador firma y publica"'}>${I.plus} Publicar release</button></div>
+      <button class="btn btn-pri" data-a="publicar" ${MODO === 'hub' ? 'disabled title="Se publica desde el repo y el pipeline, con la firma fuera del hub"' : u.rol === 'publicador' ? '' : 'disabled title="Solo el rol Publicador firma y publica"'}>${I.plus} Publicar release</button></div>
       <div class="tabs">${tabs}</div>
       <section class="panel"><div class="tabla-wrap"><table><thead><tr><th>Versión</th><th>Publicado</th><th>Canal</th><th>Tipo</th><th>Desde</th><th>Instalaciones</th></tr></thead><tbody>${filas}</tbody></table></div></section>
-      ${u.rol !== 'publicador' ? `<div class="aviso a-info">${I.info}<div>Para publicar un release entrá como <b>Nicolás Vidal (Publicador)</b>. La clave de firma no vive en el hub.</div></div>` : ''}`;
+      ${MODO === 'hub' ? `<div class="aviso a-info">${I.info}<div>El hub ofrece lo que está publicado en <code>productos/</code> del repo: un release nuevo entra por el pipeline, firmado con una clave que no vive en el hub.</div></div>` : u.rol !== 'publicador' ? `<div class="aviso a-info">${I.info}<div>Para publicar un release entrá como <b>Nicolás Vidal (Publicador)</b>. La clave de firma no vive en el hub.</div></div>` : ''}`;
   }
 
   function vAgentes() {
     const filas = S.agentes.map(a => {
       const stacks = S.instalaciones.filter(i => i.agente === a.id).map(i => prod(i.producto).codigo);
       const est = { online: '<span class="pill p-ok">En línea</span>', offline: '<span class="pill p-crit">Fuera de línea</span>', revocado: '<span class="pill p-neutro">Revocado</span>', pendiente: '<span class="pill p-warn">Esperando canje</span>' }[a.estado];
-      return `<tr><td><code>${esc(a.host)}</code><span class="sub">${esc(a.id)}</span></td><td>${esc(tenant(a.tenant).nombre)}</td>
+      return `<tr><td><code>${esc(a.host)}</code><span class="sub">${esc(a.id)}</span></td><td>${esc((tenant(a.tenant) || { nombre: a.tenant }).nombre)}</td>
         <td>${est}</td><td class="num">${esc(a.visto)}</td>
-        <td class="num">${esc(a.version)} ${a.version !== AGENTE_ULTIMA && a.estado !== 'pendiente' ? '<span class="pill p-warn">desactualizado</span>' : ''}</td>
+        <td class="num">${esc(a.version)} ${MODO !== 'hub' && a.version !== AGENTE_ULTIMA && a.estado !== 'pendiente' ? '<span class="pill p-warn">desactualizado</span>' : ''}</td>
         <td>${stacks.map(s => `<span class="tag-prod">${s}</span>`).join(' ') || '<span class="suave">—</span>'}</td>
         <td>${a.estado === 'pendiente' ? `<button class="btn btn-sec btn-chico" data-a="canjear" data-id="${a.id}">Simular canje</button>` : a.estado !== 'revocado' ? `<button class="btn btn-fantasma btn-chico" data-a="pedir-revocar" data-id="${a.id}">Revocar</button>` : ''}</td></tr>`;
     }).join('');
@@ -990,12 +1019,12 @@
 
   function vAuditoria() {
     const f = UI.filtroAud;
-    let filas = S.historial.map(h => ({ fecha: h.fecha, tenant: h.tenant, tipo: h.tipo, txt: `${prod(h.producto).nombre} ${AMB[h.ambiente]}: ${h.desde} → ${h.hacia}`, res: h.resultado, por: h.por, id: h.id }))
+    let filas = S.historial.map(h => ({ fecha: h.fecha, tenant: h.tenant, tipo: h.tipo, txt: `${prod(h.producto).nombre} ${amb(h.ambiente)}: ${h.desde} → ${h.hacia}`, res: h.resultado, por: h.por, id: h.id }))
       .concat(S.auditoria.map(a => ({ fecha: a.fecha, tenant: a.tenant, tipo: 'Administración', txt: a.accion, res: 'registro', por: a.por })));
     filas.sort((a, b) => b.fecha.localeCompare(a.fecha));
     if (f.tenant) filas = filas.filter(x => x.tenant === f.tenant);
     if (f.tipo) filas = filas.filter(x => x.tipo === f.tipo);
-    const res = { ok: '<span class="pill p-ok">Verificado</span>', rollback: '<span class="pill p-warn">Rollback auto</span>', manual: '<span class="pill p-info">Rollback manual</span>', retenido: '<span class="pill p-crit">Retenido</span>', registro: '<span class="pill p-neutro">Registro</span>' };
+    const res = { ok: '<span class="pill p-ok">Verificado</span>', rollback: '<span class="pill p-warn">Rollback auto</span>', manual: '<span class="pill p-info">Rollback manual</span>', retenido: '<span class="pill p-crit">Retenido</span>', registro: '<span class="pill p-neutro">Registro</span>', error: '<span class="pill p-crit">Falló</span>', en_curso: '<span class="pill p-info">En curso</span>', cancelada: '<span class="pill p-neutro">Retirada</span>' };
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Auditoría</span><h1>Historial completo, no editable</h1>
       <p>Despliegues, rollbacks y cambios de parametría de todo el parque.</p></div>
@@ -1019,6 +1048,15 @@
       const ms = misMails();
       cuerpo = `<p class="suave chico">Lo que la plataforma mandó. En producción sale por mail; acá queda la bandeja para ver el circuito.</p>
         <div>${ms.map(m => `<div class="mail"><b>${esc(m.asunto)}</b><span class="chico">${esc(m.cuerpo)}</span><small>${esc(m.fecha)} · para ${esc(m.para)}</small></div>`).join('') || '<div class="vacio">Sin avisos.</div>'}</div>`;
+    } else if (d.tipo === 'usuarios' && MODO === 'hub') {
+      const u = usuarioActual(), t = u.tenant ? tenant(u.tenant) : null, id = HUB.usuario() || {};
+      titulo = 'Tu sesión';
+      cuerpo = `<dl class="datos"><dt>Usuario</dt><dd>${esc(u.nombre)}<span class="sub">${esc(u.email || id.email || '')}</span></dd>
+          <dt>Rol</dt><dd>${ROLES[u.rol].nombre} · ${t ? esc(t.nombre) : 'Accusys'}</dd>
+          <dt>Segundo factor</dt><dd><span class="pill p-ok">aal2 · TOTP verificado</span></dd>
+          <dt>Id</dt><dd><code>${esc(u.id)}</code></dd></dl>
+        <p class="suave chico">Qué podés hacer lo deciden las tablas del hub, no el token: si te cambian el rol, vale desde el próximo pedido.</p>
+        <div class="fila" style="border-top:1px solid var(--linea);padding-top:14px"><button class="btn btn-sec" data-a="logout">${I.logout} Cerrar sesión</button><button class="btn btn-fantasma" data-a="recargar">Recargar datos</button></div>`;
     } else if (d.tipo === 'usuarios') {
       titulo = 'Cambiar de usuario';
       cuerpo = `<p class="suave chico">Probá la plataforma desde cada rol. El estado del mock se conserva.</p>
@@ -1026,22 +1064,28 @@
         <div class="fila" style="border-top:1px solid var(--linea);padding-top:14px"><button class="btn btn-sec" data-a="logout">${I.logout} Cerrar sesión</button><button class="btn btn-fantasma" data-a="pedir-reset">Reiniciar datos de demo</button></div>`;
     } else if (d.tipo === 'manifiesto') {
       const r = rel(d.p, d.v);
+      const man = MODO === 'hub' ? S.manifiestos[`${d.p}@${d.v}`] : manifiesto(d.p, r);
       titulo = `Manifiesto · ${prod(d.p).nombre} ${d.v}`;
-      cuerpo = `<p class="suave chico">Firmado con la clave de publicación de Accusys. El agente valida la firma antes de aplicar.</p><div class="cmd" style="white-space:pre-wrap">${esc(JSON.stringify(manifiesto(d.p, r), null, 2))}</div>`;
+      cuerpo = `<p class="suave chico">Firmado con la clave de publicación de Accusys. El agente valida la firma antes de aplicar.</p><div class="cmd" style="white-space:pre-wrap">${esc(JSON.stringify(man, null, 2))}</div>`;
+    } else if (d.tipo === 'log' && MODO === 'hub') {
+      const h = S.historial.find(x => x.id === d.id), o = d.orden;
+      titulo = `${prod(h.producto).nombre} ${h.desde} → ${h.hacia}`;
+      cuerpo = `<dl class="datos"><dt>Cliente</dt><dd>${esc((tenant(h.tenant) || { nombre: h.tenant }).nombre)}</dd><dt>Instalación</dt><dd>${esc(h.ambiente)}</dd><dt>Operación</dt><dd>${esc(h.tipo)} · orden <code>${esc(h.orden)}</code></dd><dt>Por</dt><dd>${esc(h.por)}</dd><dt>Fecha</dt><dd class="num">${esc(h.fecha)}${h.duracion ? ' · ' + esc(h.duracion) : ''}</dd>${o && o.detalle ? `<dt>Detalle</dt><dd>${esc(o.detalle)}</dd>` : ''}</dl>
+        ${o ? consolaEventos(o) : '<div class="vacio">Cargando los eventos del agente…</div>'}`;
     } else if (d.tipo === 'log') {
       const h = S.historial.find(x => x.id === d.id);
       titulo = `${prod(h.producto).nombre} ${h.desde} → ${h.hacia}`;
       const logs = h.logs || logFicticio(h);
-      cuerpo = `<dl class="datos"><dt>Cliente</dt><dd>${esc(tenant(h.tenant).nombre)}</dd><dt>Ambiente</dt><dd>${AMB[h.ambiente]}</dd><dt>Operación</dt><dd>${esc(h.tipo)}</dd><dt>Por</dt><dd>${esc(h.por)}</dd><dt>Fecha</dt><dd class="num">${esc(h.fecha)} · ${esc(h.duracion)}</dd></dl>
+      cuerpo = `<dl class="datos"><dt>Cliente</dt><dd>${esc(tenant(h.tenant).nombre)}</dd><dt>Ambiente</dt><dd>${amb(h.ambiente)}</dd><dt>Operación</dt><dd>${esc(h.tipo)}</dd><dt>Por</dt><dd>${esc(h.por)}</dd><dt>Fecha</dt><dd class="num">${esc(h.fecha)} · ${esc(h.duracion)}</dd></dl>
         <div class="consola" style="max-height:none">${logs.map(l => `<span class="ts">[${l.h}]</span> <span class="${l.c || ''}">${esc(l.t)}</span>`).join('\n')}</div>`;
     } else if (d.tipo === 'parque') {
       const t = tenant(d.t), p = prod(d.p), tpr = tp(d.t, d.p), m = mant(tpr);
       const is = S.instalaciones.filter(i => i.tenant === d.t && i.producto === d.p);
       titulo = `${t.nombre} · ${p.nombre}`;
-      cuerpo = `<dl class="datos"><dt>Mantenimiento</dt><dd><span class="pill ${m.pill}">${fecha(tpr.mantenimientoHasta)}</span></dd><dt>Autoservicio</dt><dd>${tpr.autoservicio ? 'Habilitado' : 'Deshabilitado'}</dd><dt>Canal</dt><dd>${tpr.canal}</dd><dt>Última estable</dt><dd>${esc(ultimaEstable(d.p).version)}</dd></dl>
-        ${is.map(i => { const ag = agente(i.agente); return `<div class="panel panel-cuerpo pila" style="box-shadow:none"><div class="fila" style="justify-content:space-between"><b>${AMB[i.ambiente]} · ${esc(i.version)}</b>${ag.estado === 'online' ? '<span class="pill p-ok">Agente en línea</span>' : '<span class="pill p-crit">Agente caído</span>'}</div><span class="suave chico"><code>${esc(ag.host)}</code> · deploy-agent ${ag.version} · ${ag.visto}</span><span class="suave chico">Último despliegue ${esc(i.ultimoDeploy.fecha)} por ${esc(i.ultimoDeploy.por)}</span></div>`; }).join('')}
-        <div class="aviso a-info">${I.shield}<div>Accusys no despliega en un cliente sin habilitación explícita, registrada en el historial.</div></div>
-        <button class="btn btn-sec" data-a="pedir-habilitacion" data-t="${t.id}" data-p="${p.id}">Pedir habilitación para asistir</button>`;
+      cuerpo = `<dl class="datos"><dt>Mantenimiento</dt><dd><span class="pill ${m.pill}">${fecha(tpr.mantenimientoHasta)}</span></dd><dt>Autoservicio</dt><dd>${tpr.autoservicio ? 'Habilitado' : 'Deshabilitado'}</dd><dt>Canal</dt><dd>${tpr.canal}</dd><dt>Última estable</dt><dd>${esc((ultimaEstable(d.p) || { version: '—' }).version)}</dd></dl>
+        ${is.map(i => { const ag = agente(i.agente); return `<div class="panel panel-cuerpo pila" style="box-shadow:none"><div class="fila" style="justify-content:space-between"><b>${amb(i.ambiente)} · ${esc(i.version)}</b>${ag.estado === 'online' ? '<span class="pill p-ok">Agente en línea</span>' : '<span class="pill p-crit">Agente caído</span>'}</div><span class="suave chico"><code>${esc(ag.host)}</code> · deploy-agent ${ag.version} · ${ag.visto}</span>${i.ultimoDeploy.fecha ? `<span class="suave chico">Último despliegue ${esc(i.ultimoDeploy.fecha)} por ${esc(i.ultimoDeploy.por)}</span>` : ''}</div>`; }).join('')}
+        <div class="aviso a-info">${I.shield}<div>Accusys no despliega en un cliente sin habilitación explícita, registrada en el historial.${MODO === 'hub' ? ' La otorga el Aprobador del cliente desde su pantalla de usuarios.' : ''}</div></div>
+        ${MODO === 'hub' ? habilitacionVigente(t.id) : `<button class="btn btn-sec" data-a="pedir-habilitacion" data-t="${t.id}" data-p="${p.id}">Pedir habilitación para asistir</button>`}`;
     } else if (d.tipo === 'publicar') {
       titulo = 'Publicar release';
       cuerpo = `
@@ -1060,14 +1104,25 @@
     if (m.tipo === 'rollback') {
       const i = inst(m.id);
       t = `Volver a ${i.puntoRetorno.version}`;
-      c = `<p>El agente restaura el <code>docker-compose.yml</code> y los digests guardados de ${esc(i.puntoRetorno.version)} en ${prod(i.producto).nombre} ${AMB[i.ambiente]}. Solo se toca este stack.</p><div class="aviso a-info">${I.info}<div>Volver atrás nunca se bloquea por mantenimiento vencido.</div></div>`;
+      c = `<p>El agente restaura el <code>docker-compose.yml</code> y los digests guardados de ${esc(i.puntoRetorno.version)} en ${prod(i.producto).nombre} ${amb(i.ambiente)}. Solo se toca este stack.</p><div class="aviso a-info">${I.info}<div>Volver atrás nunca se bloquea por mantenimiento vencido.</div></div>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-peligro" data-a="confirmar-rollback" data-id="${i.id}">${I.undo} Volver a ${esc(i.puntoRetorno.version)}</button>`;
+    } else if (m.tipo === 'coordinar' && MODO === 'hub') {
+      t = 'Despliegue asistido';
+      c = `<p>Este release no va por autoservicio: trae migración de base o el autoservicio está deshabilitado. Lo despliega Soporte de Accusys con una habilitación de tu organización, que otorga el Aprobador desde <a href="#usuarios">Usuarios y roles</a>.</p><p class="suave chico">El pedido de ventana todavía no sale desde el hub: coordinalo con Soporte por los canales habituales.</p>`;
+      pie = `<button class="btn btn-pri" data-a="cerrar-modal">Entendido</button>`;
     } else if (m.tipo === 'coordinar') {
       t = 'Coordinar ventana con Accusys';
       c = `<p>Este release se despliega en modo asistido: backup obligatorio, ventana acordada y verificación con Soporte de Accusys.</p>
         <div class="campo"><label for="coord-fecha">Fecha propuesta</label><input type="date" id="coord-fecha" value="2026-10-02"></div>
         <div class="campo"><label for="coord-nota">Comentario</label><textarea id="coord-nota" rows="3" style="font-family:var(--cuerpo)">Preferimos después de las 20 h.</textarea></div>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="enviar-coordinar">Enviar pedido</button>`;
+    } else if (m.tipo === 'enrolar' && MODO === 'hub' && m.codigo) {
+      t = 'Código de enrolamiento';
+      c = `<p class="chico suave">Vale hasta ${esc(HUB.fechaLocal(m.expira))} y se usa una sola vez. El agente lo canjea por su propio token; el hub guarda solo el hash.</p>
+        <div class="codigo-enrol">${esc(m.codigo)}</div>
+        <p class="chico suave">En el servidor del cliente, con el compose del agente (<code>ejemplos/agente-conectado-compose.yml</code>):</p>
+        <div class="cmd">docker compose run --rm agente enrolar \\\n  --hub ${esc(location.origin)} --codigo ${esc(m.codigo)}${m.host ? ` --host ${esc(m.host)}` : ''}\ndocker compose up -d</div>`;
+      pie = `<button class="btn btn-sec" data-a="copiar-cmd">Copiar comando</button><button class="btn btn-pri" data-a="cerrar-modal">Listo</button>`;
     } else if (m.tipo === 'enrolar') {
       if (!m.codigo) {
         t = 'Enrolar servidor';
@@ -1086,6 +1141,20 @@
       t = 'Revocar agente';
       c = `<p>Se revocan el token de <code>${esc(a.host)}</code> y su credencial del registry. El servidor no se toca; los stacks siguen corriendo como están.</p>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-peligro" data-a="revocar" data-id="${a.id}">Revocar</button>`;
+    } else if (m.tipo === 'alta-usuario') {
+      const fijo = m.tenant ? tenant(m.tenant) : tenant(usuarioActual().tenant);
+      t = `Alta de usuario · ${fijo.nombre}`;
+      c = `<p class="chico suave">La persona tiene que existir en el proveedor de identidad (el registro abierto está cerrado: la crea Accusys). Al ingresar sin alta, la pantalla le muestra su id: pedíselo y cargalo acá.</p>
+        <div class="campo"><label for="alta-id">Id del usuario</label><input type="text" id="alta-id" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off"></div>
+        <div class="campo"><label for="alta-mail">Email</label><input type="email" id="alta-mail" autocomplete="off"></div>
+        <div class="campo"><label for="alta-nombre">Nombre</label><input type="text" id="alta-nombre" autocomplete="off"></div>
+        <div class="campo"><label for="alta-rol">Rol</label><select id="alta-rol"><option value="lector">Lector</option><option value="operador" selected>Operador</option><option value="aprobador">Aprobador</option></select></div>`;
+      pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="enviar-alta" data-t="${esc(fijo.id)}">Dar de alta</button>`;
+    } else if (m.tipo === 'nuevo-cliente') {
+      t = 'Nuevo cliente';
+      c = `<div class="campo"><label for="nc-id">Identificador</label><input type="text" id="nc-id" placeholder="banco-andino" autocomplete="off"><span class="ayuda">Minúsculas, números y guiones. No se cambia después.</span></div>
+        <div class="campo"><label for="nc-nombre">Nombre</label><input type="text" id="nc-nombre" placeholder="Banco Andino" autocomplete="off"></div>`;
+      pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="crear-cliente">Crear</button>`;
     } else if (m.tipo === 'invitar') {
       t = 'Invitar usuario';
       c = `<div class="campo"><label for="inv-mail">Email</label><input type="email" id="inv-mail" value="nuevo.operador@${tenant(usuarioActual().tenant).id}.example"></div>
@@ -1098,6 +1167,314 @@
     }
     return `<div class="velo modal-velo" data-a="cerrar-modal"><div class="modal" role="dialog" aria-label="${esc(t)}" data-stop="1">
       <div class="panel-cab"><h2>${esc(t)}</h2></div><div class="panel-cuerpo">${c}</div><div class="modal-pie">${pie}</div></div></div>`;
+  }
+
+  /* ============================================================
+     Modo hub
+     ============================================================ */
+  function vacio() {
+    return { hoy: new Date().toISOString().slice(0, 10), sesion: null, productos: [], releases: {}, tenants: [], agentes: [], instalaciones: [],
+      usuarios: [], historial: [], auditoria: [], mails: [], ordenes: [], habilitaciones: [], manifiestos: {} };
+  }
+
+  function vistaLoginHub() {
+    const L = UI.loginHub || (UI.loginHub = { paso: 'credenciales' });
+    const cfg = HUB.config() || {};
+    const err = L.error ? `<div class="aviso a-crit">${I.alert}<div>${esc(L.error)}</div></div>` : '';
+    const ocupado = L.ocupado ? 'disabled' : '';
+    const digitos = `<div class="totp">${[0, 1, 2, 3, 4, 5].map(n => `<input type="text" inputmode="numeric" maxlength="6" id="totp-${n}" data-totp="${n}" aria-label="Dígito ${n + 1}" autocomplete="one-time-code">`).join('')}</div>`;
+    let titulo = 'Ingresar', sub = 'Con tu usuario y el segundo factor (TOTP).', form = '';
+    if (!cfg.identidad) {
+      form = `<div class="aviso a-crit">${I.alert}<div><b>El hub no tiene configurada la identidad.</b> ${esc(cfg.motivo || 'Definí SUPABASE_URL y SUPABASE_PUBLISHABLE_KEY (o DC_JWT_SECRET para desarrollo) y reiniciá el hub.')}</div></div>`;
+    } else if (L.paso === 'sin-alta') {
+      titulo = 'Falta tu alta'; sub = 'Ingresaste bien, pero tu usuario no tiene rol en deployHub.';
+      form = `<div class="aviso a-warn">${I.users}<div>Pedile el alta al Aprobador de tu organización (o a Accusys) con este id:</div></div>
+        <div class="cmd">${esc(L.id || '')}</div>${L.email ? `<p class="suave chico">Usuario: ${esc(L.email)}</p>` : ''}
+        <div class="fila"><button class="btn btn-sec" data-a="logout">${I.logout} Salir</button><button class="btn btn-pri" data-a="recargar">Ya tengo el alta</button></div>`;
+    } else if (cfg.identidad === 'token') {
+      sub = 'Hub de desarrollo: pegá un token de dc-hub token-dev.';
+      form = `<div class="pila"><div class="campo"><label for="login-token">Token</label><textarea id="login-token" rows="4" autocomplete="off"></textarea><span class="ayuda"><code>dc-hub token-dev &lt;uuid&gt;</code> con el mismo DC_JWT_SECRET que el hub.</span></div>
+        <button class="btn btn-pri" data-a="hub-token" ${ocupado}>Ingresar</button></div>`;
+    } else if (L.paso === 'enrolar') {
+      titulo = 'Activá el segundo factor'; sub = 'Es obligatorio. Se hace una sola vez.';
+      form = `<div class="pila">
+        <p class="chico">Escaneá el código con tu app de autenticación (Google Authenticator, Microsoft Authenticator, 1Password…) y escribí el código de 6 dígitos que muestra.</p>
+        ${L.qr ? `<img src="${esc(L.qr)}" alt="Código QR para la app de autenticación" style="width:180px;height:180px;background:#fff;border-radius:8px;padding:8px">` : ''}
+        <div class="campo"><span class="lbl">Si no podés escanear, cargá esta clave</span><div class="cmd" style="user-select:all">${esc(L.secreto || '')}</div></div>
+        <div class="campo"><span class="lbl">Código de verificación</span>${digitos}</div>
+        <div class="fila"><button class="btn btn-pri" data-a="hub-verificar" ${ocupado}>Verificar y entrar</button><button class="btn btn-fantasma" data-a="logout">Cancelar</button></div></div>`;
+    } else if (L.paso === 'totp') {
+      form = `<div class="pila"><div class="campo"><span class="lbl">Código de verificación (TOTP)</span>${digitos}<span class="ayuda">El de tu app de autenticación para deployHub.</span></div>
+        <div class="fila"><button class="btn btn-pri" data-a="hub-verificar" ${ocupado}>Verificar y entrar</button><button class="btn btn-fantasma" data-a="logout">Usar otra cuenta</button></div></div>`;
+    } else {
+      form = `<div class="pila">
+        <div class="campo"><label for="login-email">Email</label><input id="login-email" type="email" autocomplete="username" value="${esc(L.email || '')}"></div>
+        <div class="campo"><label for="login-pass">Contraseña</label><input id="login-pass" type="password" autocomplete="current-password"></div>
+        <button class="btn btn-pri" data-a="hub-ingresar" ${ocupado}>${L.ocupado ? 'Ingresando…' : 'Ingresar'}</button></div>`;
+    }
+    return `
+      <div class="login">
+        ${heroLogin()}
+        <section class="login-form">
+          <img class="logo-accusys" src="accusys.png" alt="Accusys">
+          <div class="pila" style="gap:6px"><h2 style="font-size:1.4rem">${titulo}</h2><p class="suave">${sub}</p></div>
+          ${err}${form}
+        </section>
+      </div>`;
+  }
+
+  function codigoTotp() { return [0, 1, 2, 3, 4, 5].map(k => ($('#totp-' + k) || {}).value || '').join(''); }
+
+  async function paso(fn) {
+    UI.loginHub.ocupado = true; UI.loginHub.error = null; render();
+    try { await fn(); } catch (e) { if (UI.loginHub) UI.loginHub.error = e.message; }
+    // si entró, recargar() ya dibujó la app y UI.loginHub quedó en null
+    if (UI.loginHub) { UI.loginHub.ocupado = false; if (!S.sesion) render(); }
+  }
+
+  let refrescando = false;
+  async function recargar(silencioso) {
+    if (refrescando) return;
+    refrescando = true;
+    try {
+      const nuevo = await HUB.cargar();
+      const antes = JSON.stringify(S);
+      S = nuevo;
+      UI.loginHub = null;
+      if (!DEPH) retomarOrdenAbierta();
+      if (!silencioso || JSON.stringify(S) !== antes) render();
+    } catch (e) {
+      if (e.estado === 403 && /no tiene alta/.test(e.message)) {
+        const id = HUB.usuario() || {};
+        S = vacio(); UI.loginHub = { paso: 'sin-alta', id: id.id, email: id.email }; render();
+      } else if (e.estado === 401) {
+        S = vacio(); UI.loginHub = { paso: 'credenciales', error: 'La sesión venció: volvé a ingresar.' }; render();
+      } else if (!silencioso) toast(e.message, true);
+    } finally { refrescando = false; }
+  }
+
+  async function llamar(metodo, ruta, cuerpo, ok) {
+    try {
+      const r = await HUB.api(metodo, ruta, cuerpo);
+      if (ok) toast(ok);
+      return r;
+    } catch (e) { toast(e.message, true); throw e; }
+  }
+
+  function habilitacionVigente(tid) {
+    const h = S.habilitaciones.find(x => x.tenant === tid && x.vigente);
+    return h ? `<span class="pill p-ok">Habilitación vigente hasta ${esc(HUB.fechaLocal(h.vence))}</span>` : '<span class="pill p-neutro">Sin habilitación vigente</span>';
+  }
+
+  function panelHabilitaciones(t, admin) {
+    const hs = S.habilitaciones.filter(h => h.tenant === t.id);
+    const vig = hs.find(h => h.vigente);
+    const filas = hs.slice(0, 8).map(h => `<tr><td class="num">${esc(HUB.fechaLocal(h.otorgada))}</td><td class="num">${esc(HUB.fechaLocal(h.vence))}</td><td>${esc(h.motivo || '')}</td>
+      <td>${h.vigente ? '<span class="pill p-ok">Vigente</span>' : h.revocada ? '<span class="pill p-neutro">Revocada</span>' : '<span class="pill p-neutro">Vencida</span>'}</td>
+      <td>${h.vigente && admin ? `<button class="btn btn-fantasma btn-chico" data-a="revocar-habilitacion" data-id="${h.id}">Revocar</button>` : ''}</td></tr>`).join('');
+    return `<section class="panel">
+      <div class="panel-cab"><div><h2>Asistencia de Accusys</h2><p>Soporte de Accusys ordena sobre tus instalaciones solo con una habilitación vigente, que otorga un Aprobador y queda en la auditoría.</p></div>${vig ? '<span class="pill p-ok">Habilitada</span>' : '<span class="pill p-neutro">No habilitada</span>'}</div>
+      ${admin ? `<div class="panel-cuerpo fila" style="align-items:end">
+        <div class="campo" style="width:120px"><label for="hab-horas">Horas</label><input type="number" id="hab-horas" min="1" max="72" value="4"></div>
+        <div class="campo" style="flex:1;min-width:200px"><label for="hab-motivo">Motivo</label><input type="text" id="hab-motivo" placeholder="Despliegue asistido de MEP 4.8.0"></div>
+        <button class="btn btn-pri" data-a="habilitar">${I.shield} Habilitar a Accusys</button></div>` : ''}
+      ${filas ? `<div class="tabla-wrap"><table><thead><tr><th>Otorgada</th><th>Vence</th><th>Motivo</th><th>Estado</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>` : '<div class="vacio">Nunca se habilitó a Accusys.</div>'}
+    </section>`;
+  }
+
+  // --- órdenes reales ---
+  const ABIERTA = ['pendiente', 'entregada', 'en_curso'];
+  const EVENTOS = {
+    orden_recibida: d => `orden recibida por el agente (${d.tipo || ''})`,
+    despliegue_iniciado: d => `desplegando ${d.desde || '—'} → ${d.hacia || ''}`,
+    despliegue_ok: d => `${d.hacia || ''} desplegada y verificada`,
+    despliegue_falla: d => `verificación FALLIDA: ${d.motivo || ''}`,
+    requiere_intervencion: d => `requiere intervención: ${d.razon || ''}`,
+    rollback_cancelado: () => 'vuelta atrás cancelada: la instalación queda para diagnóstico',
+    rollback_ok: d => `vuelta atrás completada ${d.detalle || ''}`,
+    rollback_falla: d => `la vuelta atrás falló: ${d.detalle || ''}`
+  };
+  const CLASE_EVENTO = { despliegue_ok: 'ok', rollback_ok: 'ok', despliegue_falla: 'err', rollback_falla: 'err', requiere_intervencion: 'err', rollback_cancelado: 'warn', orden_recibida: 'info', despliegue_iniciado: 'info' };
+  function consolaEventos(o) {
+    const ev = o.eventos || [];
+    if (!ev.length) return `<div class="consola" role="log"><span class="suave">${ABIERTA.includes(o.estado) ? 'Todavía no llegaron eventos del agente…' : 'La orden no tiene eventos.'}</span></div>`;
+    return `<div class="consola" role="log">${ev.map(e => {
+      const h = (HUB.fechaLocal(e.ts, true) || '').slice(11) || '—';
+      const txt = (EVENTOS[e.evento] || (d => `${e.evento} ${Object.keys(d || {}).length ? JSON.stringify(d) : ''}`))(e.datos || {});
+      return `<span class="ts">[${esc(h)}]</span> <span class="${CLASE_EVENTO[e.evento] || ''}">${esc(txt)}</span>`;
+    }).join('\n')}</div>`;
+  }
+
+  let sondeo = null;
+  function seguir(orden, extra) {
+    DEPH = Object.assign(DEPH || {}, extra || {}, { orden });
+    clearInterval(sondeo);
+    if (!ABIERTA.includes(orden.estado)) return;
+    sondeo = setInterval(async () => {
+      if (!DEPH || DEPH.orden.id !== orden.id) return clearInterval(sondeo);
+      try {
+        const o = await HUB.api('GET', `/ordenes/${encodeURIComponent(orden.id)}`);
+        const cambio = JSON.stringify(o) !== JSON.stringify(DEPH.orden);
+        DEPH.orden = o;
+        if (!ABIERTA.includes(o.estado)) { clearInterval(sondeo); recargar(true); }
+        if (cambio) refrescarDep();
+      } catch (e) { /* un corte de red no corta el seguimiento */ }
+    }, 2000);
+  }
+
+  function retomarOrdenAbierta() {
+    const u = usuarioActual();
+    if (!u || !u.tenant) return;
+    const o = S.ordenes.find(x => x.tenant === u.tenant && ABIERTA.includes(x.estado));
+    if (!o) return;
+    const i = S.instalaciones.find(x => x.agente === o.agente && x.nombre === o.instalacion);
+    if (!i) return;
+    HUB.api('GET', `/ordenes/${encodeURIComponent(o.id)}`).then(d => { seguir(d, { instId: i.id, version: o.release, desde: i.version }); refrescarDep(); }).catch(() => {});
+  }
+
+  async function ordenar(i, tipo, release) {
+    const o = await llamar('POST', '/ordenes', { agente: i.agente, instalacion: i.nombre, tipo, release: release || null });
+    seguir(Object.assign(o, { eventos: [] }), { instId: i.id, version: release || (i.puntoRetorno && i.puntoRetorno.version), desde: i.version });
+    UI.vista = 'desplegar';
+    if (location.hash === '#desplegar') render(); else location.hash = 'desplegar';
+  }
+
+  function bannerHub() {
+    if (!DEPH || UI.vista === 'desplegar' || !ABIERTA.includes(DEPH.orden.estado)) return '';
+    const i = inst(DEPH.instId);
+    if (!i) return '';
+    const txt = { preflight: 'Preflight en curso', desplegar: 'Despliegue en curso', rollback: 'Vuelta atrás en curso' }[DEPH.orden.tipo];
+    return `<div style="padding:14px 28px 0"><div class="aviso a-info" style="align-items:center">${I.rocket}<div style="flex:1"><b>${txt}</b> · ${prod(i.producto).nombre} ${esc(i.nombre)}${DEPH.orden.release ? ' → ' + esc(DEPH.orden.release) : ''}. La ejecuta el agente: podés navegar tranquilo.</div><a class="btn btn-sec btn-chico" href="#desplegar">Ver</a></div></div>`;
+  }
+
+  function vOrdenHub() {
+    if (!DEPH) return `<div class="vacio">No hay ninguna operación en curso. Elegí una versión desde el <a href="#catalogo">catálogo</a>.</div>`;
+    const o = DEPH.orden, i = inst(DEPH.instId), p = prod(i.producto), ag = agente(i.agente);
+    const abierta = ABIERTA.includes(o.estado);
+    const titulo = { preflight: 'Preflight', desplegar: 'Despliegue autoservicio', rollback: 'Vuelta atrás manual' }[o.tipo];
+    // al terminar, la instalación recargada ya no tiene ese punto de retorno: vale el de la orden
+    const destino = o.tipo === 'rollback' ? DEPH.version || o.release : o.release;
+    const estado = {
+      pendiente: `<span class="pill p-warn">Esperando al agente</span>`, entregada: `<span class="pill p-info">El agente la tomó</span>`,
+      en_curso: `<span class="pill p-info">En curso</span>`, cancelada: `<span class="pill p-neutro">Retirada</span>`
+    }[o.estado] || { ok: '<span class="pill p-ok">OK</span>', revertido: '<span class="pill p-warn">Revertido</span>', abortado: '<span class="pill p-crit">Bloqueado</span>' }[o.resultado] || `<span class="pill p-crit">${esc(o.resultado || o.estado)}</span>`;
+    const falla = (o.eventos || []).some(e => e.evento === 'despliegue_falla');
+    let panel = '';
+    if (o.estado === 'pendiente') {
+      panel = `<div class="aviso ${ag.estado === 'online' ? 'a-info' : 'a-warn'}">${I.clock}<div>${ag.estado === 'online' ? 'El agente la toma en segundos.' : `El agente de <code>${esc(ag.host)}</code> está fuera de línea: la orden espera a que reconecte.`}</div></div>
+        <div class="fila"><button class="btn btn-sec" data-a="retirar-orden">Retirar la orden</button></div>`;
+    } else if (abierta && falla && o.tipo === 'desplegar') {
+      panel = `<div class="aviso a-crit">${I.alert}<div><b>La verificación falló.</b> Si nadie lo cancela, el agente vuelve a ${esc(DEPH.desde)} con los digests guardados.${o.cancelar_rollback ? ' <b>Pediste cancelar la vuelta atrás:</b> el agente lo ve en su próxima consulta.' : ''}</div></div>
+        ${o.cancelar_rollback ? '' : `<div class="fila"><button class="btn btn-sec" data-a="cancelar-rollback-hub">Cancelar la vuelta atrás y dejar para diagnóstico</button></div>`}`;
+    } else if (!abierta && o.tipo === 'preflight') {
+      const comp = ((o.resumen || {}).preflight || {}).comprobaciones || [];
+      const tabla = comp.map(c => `<div class="chk"><span class="ic ${c.ok ? 'ok' : c.bloqueante ? 'fallo' : 'warn'}">${c.ok ? '✓' : c.bloqueante ? '✕' : '!'}</span><div><b>${esc(c.nombre)}</b><small>${esc(c.detalle || '')}</small></div><span></span></div>`).join('');
+      panel = `${tabla ? `<section class="panel"><div class="panel-cab"><h2>Comprobaciones</h2><span class="suave chico">sin tocar lo que está corriendo</span></div><div class="panel-cuerpo checks">${tabla}</div></section>` : ''}
+        ${o.resultado === 'ok' ? `<section class="panel"><div class="panel-cab"><div><h2>Confirmá el despliegue</h2><p>El preflight pasó. El agente toma un punto de retorno antes de tocar nada y vuelve atrás solo si la verificación falla.</p></div></div>
+          <div class="panel-cuerpo fila"><button class="btn btn-pri" data-a="desplegar-hub" ${puedeEjecutar().ok ? '' : 'disabled title="' + esc(puedeEjecutar().motivo) + '"'}>${I.rocket} Desplegar ${esc(o.release)} ahora</button><button class="btn btn-sec" data-a="cerrar-dep">Cancelar</button></div></section>`
+        : `<div class="aviso a-crit">${I.alert}<div><b>El preflight no pasó.</b> ${esc(o.detalle || '')} Si falta una variable, cargala en el <code>.env</code> del servidor y repetí el preflight.</div></div>
+          <div class="fila"><button class="btn btn-pri" data-a="repetir-preflight">Repetir preflight</button><button class="btn btn-sec" data-a="cerrar-dep">Cerrar</button></div>`}`;
+    } else if (!abierta) {
+      const res = {
+        ok: ['a-ok', '✓', 'var(--verde)', o.tipo === 'rollback' ? `${p.nombre} volvió ${destino ? 'a ' + destino : 'al punto de retorno'}.` : `${p.nombre} ${o.release} desplegada y verificada.`],
+        revertido: ['a-warn', '↩', 'var(--naranja)', `La verificación falló y el agente volvió a ${DEPH.desde}.`],
+        degradado: ['a-crit', '!', 'var(--rojo)', 'La instalación quedó con fallo, sin vuelta atrás automática.']
+      }[o.resultado] || ['a-crit', '!', 'var(--rojo)', o.estado === 'cancelada' ? 'La orden se retiró antes de que el agente la tomara.' : 'La orden no se completó.'];
+      panel = `<div class="resultado aviso ${res[0]}" style="padding:18px"><span class="big" style="background:${res[2]}">${res[1]}</span><div class="pila" style="gap:6px"><b style="font-size:1.05rem">${esc(res[3])}</b>${o.detalle ? `<span class="suave chico">${esc(o.detalle)}</span>` : ''}
+        <div class="fila"><button class="btn btn-sec btn-chico" data-a="ver-inst" data-id="${esc(i.id)}">Ver la instalación</button><button class="btn btn-fantasma btn-chico" data-a="cerrar-dep">Cerrar</button></div></div></div>`;
+    } else {
+      panel = `<div class="aviso a-info">${I.rocket}<div>La ejecuta el agente, no el navegador: si cerrás esta pestaña, sigue igual.</div></div>`;
+    }
+    return `
+      <div class="migas"><a href="#catalogo">Catálogo</a><span>/</span><span>${p.nombre} · ${esc(i.nombre)}</span></div>
+      <div class="cabecera"><div class="t"><span class="eyebrow">${titulo}</span><h1>${p.nombre} ${esc(DEPH.desde || i.version)} → ${esc(destino || '')}</h1>
+        <p>Instalación <code>${esc(i.nombre)}</code> en <code>${esc(ag.host)}</code> · orden <code>${esc(o.id)}</code> · pedida por ${esc(o.pedida_por)}</p></div>${estado}</div>
+      ${panel}
+      <section class="panel"><div class="panel-cab"><h2>Eventos del agente</h2><span class="suave chico">se actualiza solo</span></div><div class="panel-cuerpo">${consolaEventos(o)}</div></section>`;
+  }
+
+  const ACCIONES_HUB = {
+    // los campos se leen antes de paso(), que vuelve a dibujar el formulario
+    'hub-ingresar': () => {
+      const email = $('#login-email').value.trim(), clave = $('#login-pass').value;
+      UI.loginHub.email = email;
+      paso(async () => {
+      const st = await HUB.ingresar(email, clave);
+      if (st.paso === 'listo') return recargar();
+      Object.assign(UI.loginHub, st);
+      });
+    },
+    'hub-verificar': () => {
+      const codigo = codigoTotp();
+      if (!/^\d{6}$/.test(codigo)) { toast('Ingresá los 6 dígitos del código', true); return; }
+      paso(async () => { await HUB.verificar(UI.loginHub.factorId, codigo); await recargar(); });
+    },
+    'hub-token': () => { const t = $('#login-token').value.trim(); paso(async () => { HUB.usarToken(t); await recargar(); }); },
+    'logout': async () => { clearInterval(sondeo); DEPH = null; await HUB.salir(); S = vacio(); UI.drawer = null; UI.loginHub = { paso: 'credenciales' }; location.hash = ''; render(); },
+    'recargar': () => { UI.drawer = null; recargar(); },
+    'iniciar-deploy': d => ordenar(inst(UI.inst), 'preflight', d.v).catch(() => {}),
+    'repetir-preflight': () => ordenar(inst(DEPH.instId), 'preflight', DEPH.orden.release).catch(() => {}),
+    'desplegar-hub': () => ordenar(inst(DEPH.instId), 'desplegar', DEPH.orden.release).catch(() => {}),
+    'confirmar-rollback': d => { UI.modal = null; ordenar(inst(d.id), 'rollback').catch(() => render()); },
+    'retirar-orden': () => llamar('POST', `/ordenes/${encodeURIComponent(DEPH.orden.id)}/cancelar`, null, 'Orden retirada').then(() => recargar(true)).catch(() => {}),
+    'cancelar-rollback-hub': () => llamar('POST', `/ordenes/${encodeURIComponent(DEPH.orden.id)}/cancelar-rollback`, null, 'Pedido enviado: el agente lo ve en segundos').then(() => { DEPH.orden.cancelar_rollback = true; refrescarDep(); }).catch(() => {}),
+    'cerrar-dep': () => { clearInterval(sondeo); const id = DEPH && DEPH.instId; DEPH = null; if (id) { UI.inst = id; location.hash = 'instalacion'; } else location.hash = ''; render(); },
+    'ver-log': async d => {
+      UI.drawer = { tipo: 'log', id: d.id, orden: null }; render();
+      try { const o = await HUB.api('GET', `/ordenes/${encodeURIComponent(d.id)}`); if (UI.drawer && UI.drawer.id === d.id) { UI.drawer.orden = o; render(); } } catch (e) { toast(e.message, true); }
+    },
+    'invitar': () => { UI.modal = { tipo: 'alta-usuario' }; render(); },
+    'alta-usuario-tenant': () => { UI.modal = { tipo: 'alta-usuario', tenant: UI.tenantParam }; render(); },
+    'enviar-alta': d => {
+      const id = $('#alta-id').value.trim();
+      llamar('PUT', `/usuarios/${encodeURIComponent(id)}`, { rol: $('#alta-rol').value, tenant: d.t, email: $('#alta-mail').value.trim() || null, nombre: $('#alta-nombre').value.trim() || null }, 'Usuario dado de alta')
+        .then(() => { UI.modal = null; recargar(); }).catch(() => {});
+    },
+    'nuevo-cliente': () => { UI.modal = { tipo: 'nuevo-cliente' }; render(); },
+    'crear-cliente': () => {
+      const id = $('#nc-id').value.trim();
+      llamar('POST', '/tenants', { id, nombre: $('#nc-nombre').value.trim() }, 'Cliente creado').then(() => { UI.modal = null; UI.tenantParam = id; recargar(); }).catch(() => {});
+    },
+    'agregar-prod': () => {
+      const p = $('#nuevo-prod').value, hasta = new Date(Date.now() + 365 * 864e5).toISOString().slice(0, 10);
+      llamar('PUT', `/tenants/${encodeURIComponent(UI.tenantParam)}/productos/${encodeURIComponent(p)}`, { mantenimiento_hasta: hasta, autoservicio: true, canal: 'estable' }, `${prod(p).nombre} agregado`).then(() => recargar()).catch(() => {});
+    },
+    'generar-codigo': () => {
+      const t = $('#enr-t').value, host = $('#enr-host').value.trim() || null;
+      llamar('POST', `/tenants/${encodeURIComponent(t)}/codigos`, { host }).then(r => { UI.modal = { tipo: 'enrolar', codigo: r.codigo, expira: r.expira, host }; render(); recargar(true); }).catch(() => {});
+    },
+    'revocar': d => llamar('POST', `/agentes/${encodeURIComponent(d.id)}/revocar`, null, 'Agente revocado').then(() => { UI.modal = null; recargar(); }).catch(() => {}),
+    'habilitar': () => {
+      const horas = parseInt($('#hab-horas').value, 10);
+      llamar('POST', '/habilitaciones', { horas, motivo: $('#hab-motivo').value.trim() || null }, `Accusys habilitada por ${horas} h`).then(() => recargar()).catch(() => {});
+    },
+    'revocar-habilitacion': d => llamar('POST', `/habilitaciones/${d.id}/revocar`, null, 'Habilitación revocada').then(() => recargar()).catch(() => {}),
+    'pedir-habilitacion': () => {},
+    'publicar': () => {},
+    'reset': () => {},
+    'canjear': () => {}
+  };
+
+  function cambioHub(el, f) {
+    if (f === 'rol-usuario') {
+      const x = S.usuarios.find(u => u.id === el.dataset.id);
+      llamar('PUT', `/usuarios/${encodeURIComponent(x.id)}`, { rol: el.value, tenant: x.tenant, nombre: x.nombre, email: x.email || null }, `${x.nombre} ahora es ${ROLES[el.value].nombre}`)
+        .then(() => recargar(true)).catch(() => recargar());
+      return true;
+    }
+    if (f === 'param') {
+      const t = tenant(UI.tenantParam), p = tp(t.id, el.dataset.p), k = el.dataset.k;
+      const nuevo = Object.assign({}, p, { [k]: el.type === 'checkbox' ? el.checked : el.value });
+      llamar('PUT', `/tenants/${encodeURIComponent(t.id)}/productos/${encodeURIComponent(p.producto)}`,
+        { mantenimiento_hasta: nuevo.mantenimientoHasta, autoservicio: nuevo.autoservicio, canal: nuevo.canal }, 'Parametría actualizada · queda en auditoría')
+        .then(() => recargar()).catch(() => recargar());
+      return true;
+    }
+    if (f === 'tenant' && el.dataset.k === 'estado') {
+      llamar('PUT', `/tenants/${encodeURIComponent(UI.tenantParam)}/estado`, { estado: el.value }, 'Cliente actualizado · queda en auditoría').then(() => recargar()).catch(() => recargar());
+      return true;
+    }
+    return ['tenant', 'param-amb', 'simular'].includes(f);
   }
 
   function manifiesto(p, r) {
@@ -1148,13 +1525,14 @@
     // clicks dentro de drawer/modal no deben cerrar el velo
     if ((el.dataset.a === 'cerrar-drawer' || el.dataset.a === 'cerrar-modal') && el.classList.contains('velo') && e.target.closest('[data-stop]')) return;
     const a = el.dataset.a, d = el.dataset;
-    const acc = ACCIONES[a];
+    const acc = (MODO === 'hub' && ACCIONES_HUB[a]) || ACCIONES[a];
     if (acc) { e.preventDefault(); acc(d, el, e); }
   });
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && (UI.drawer || UI.modal)) { UI.drawer = null; UI.modal = null; render(); }
     if (e.key === 'Enter' && e.target.matches('article[data-a]')) e.target.click();
+    if (e.key === 'Enter' && e.target.closest('.login-form') && e.target.matches('input')) { const b = $('.login-form .btn-pri'); if (b && !b.disabled) b.click(); }
   });
 
   const ACCIONES = {
@@ -1273,6 +1651,7 @@
   document.addEventListener('change', e => {
     const el = e.target, f = el.dataset.f;
     if (!f) return;
+    if (MODO === 'hub' && cambioHub(el, f)) return;
     if (f === 'cat-inst') { UI.inst = el.value; render(); }
     else if (f === 'simular') DEP.simularFallo = el.checked;
     else if (f === 'rol-usuario') { const x = S.usuarios.find(u => u.id === el.dataset.id); x.rol = el.value; guardar(); toast(`${x.nombre} ahora es ${ROLES[x.rol].nombre}`); }
@@ -1296,8 +1675,10 @@
   document.addEventListener('input', e => {
     const el = e.target;
     if (el.dataset.totp != null) {
-      el.value = el.value.replace(/\D/g, '').slice(0, 1);
-      const n = +el.dataset.totp;
+      const n = +el.dataset.totp, dig = el.value.replace(/\D/g, '');
+      // pegar el código entero en cualquier casilla lo reparte
+      if (dig.length > 1) { dig.slice(0, 6 - n).split('').forEach((c, k) => { $('#totp-' + (n + k)).value = c; }); const u = Math.min(5, n + dig.length - 1); $('#totp-' + u).focus(); return; }
+      el.value = dig.slice(0, 1);
       if (el.value && n < 5) $('#totp-' + (n + 1)).focus();
     }
     if (el.dataset.var && DEP) DEP.vars[el.dataset.var] = el.value;
@@ -1312,5 +1693,17 @@
   });
 
   UI.vista = location.hash.replace('#', '');
-  render();
+  HUB.iniciar().then(cfg => {
+    if (!cfg) { render(); return; }   // sin hub: la maqueta
+    MODO = 'hub';
+    S = vacio(); DEP = null;
+    document.title = 'deployHub';
+    window.addEventListener('dc-sesion-vencida', () => { if (S.sesion) { S = vacio(); DEPH = null; UI.loginHub = { paso: 'credenciales', error: 'La sesión venció: volvé a ingresar.' }; render(); } });
+    // el parque cambia solo (latidos, órdenes de otros): se refresca sin molestar
+    setInterval(() => {
+      const foco = document.activeElement;
+      if (S.sesion && !UI.modal && !UI.drawer && document.visibilityState === 'visible' && !(foco && /INPUT|SELECT|TEXTAREA/.test(foco.tagName))) recargar(true);
+    }, 20000);
+    if (HUB.haySesion()) recargar(); else render();
+  });
 })();

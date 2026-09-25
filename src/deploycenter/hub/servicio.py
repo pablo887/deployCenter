@@ -292,6 +292,37 @@ class Hub:
                  if p.mantenimiento_hasta else None}
                 for p in productos]}
 
+    def tenants(self, perfil=None):
+        """Los clientes con su parametría. Un cliente se ve solo a sí mismo."""
+        with self.sesion(perfil) as s:
+            consulta = select(m.Tenant).order_by(m.Tenant.nombre)
+            if perfil is not None and not perfil.es_accusys:
+                consulta = consulta.where(m.Tenant.id == perfil.tenant)
+            ids = [t.id for t in s.scalars(consulta)]
+        return [self.parametria(t, perfil=perfil) for t in ids]
+
+    def catalogo_web(self, perfil=None):
+        """Productos y releases publicados, para mostrar en la web. Un cliente ve
+        solo los productos que adquirió; qué puede ordenar lo decide
+        `crear_orden` al encolar, no esta lista."""
+        adquiridos = None
+        if perfil is not None and not perfil.es_accusys:
+            adquiridos = {p["producto"] for p in self.parametria(perfil.tenant,
+                                                                   perfil=perfil)["productos"]}
+        salida = []
+        for codigo in self.catalogo.productos():
+            if adquiridos is not None and codigo not in adquiridos:
+                continue
+            datos = self.catalogo.datos_producto(codigo)
+            salida.append({
+                "id": codigo, "nombre": datos.get("nombre", codigo),
+                "descripcion": datos.get("descripcion", ""),
+                "releases": [{"manifiesto": r,
+                              "changelog": self.catalogo.novedades(codigo, r["release"])}
+                             for r in self.catalogo.releases(codigo)],
+            })
+        return salida
+
     # ------------------------------------------------------------------ #
     # enrolamiento
     # ------------------------------------------------------------------ #
