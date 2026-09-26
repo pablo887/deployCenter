@@ -17,7 +17,7 @@
   let S = cargar() || nuevo();
   let DEP = null;          // despliegue en curso (runtime, no se persiste)
   let DEPH = null;         // modo hub: la orden real que se está siguiendo
-  let UI = { vista: '', inst: null, prod: null, tenantParam: null, prodRel: null, login: { user: 'u1', paso: 1 }, drawer: null, modal: null, filtroAud: { tenant: '', tipo: '' } };
+  let UI = { vista: '', inst: null, prod: null, tenantParam: null, prodRel: null, login: { user: 'u1', paso: 1 }, drawer: null, modal: null, filtroAud: { tenant: '', tipo: '' }, filtroUsu: '' };
 
   function nuevo() {
     const s = JSON.parse(JSON.stringify(SEED));
@@ -79,6 +79,13 @@
   const inst = id => S.instalaciones.find(i => i.id === id);
   const usuarioActual = () => S.usuarios.find(u => u.id === S.sesion);
   const esAccusys = () => { const u = usuarioActual(); return u && !u.tenant; };
+  // Además del Aprobador de cada cliente, Comercial y Publicador de Accusys dan de
+  // alta usuarios de clientes. Los de Accusys se crean solo por consola (dc-hub).
+  const ADMIN_CLIENTES = ['comercial', 'publicador'];
+  const administraUsuarios = (u, tenantId) => u && (ADMIN_CLIENTES.includes(u.rol) || (u.rol === 'aprobador' && u.tenant === tenantId));
+  // el id lo devuelve el proveedor de identidad al crear la cuenta: nadie lo tipea
+  const nuevoId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
   const rels = p => S.releases[p] || [];
   const rel = (p, v) => rels(p).find(r => r.version === v);
   const tp = (t, p) => (tenant(t) || { productos: [] }).productos.find(x => x.producto === p);
@@ -144,6 +151,22 @@
     S.mails.unshift({ fecha: ahora(), tenant: t, para, asunto, cuerpo });
   }
   function auditar(accion, t) { S.auditoria.unshift({ fecha: ahora(), por: usuarioActual().nombre, tenant: t || null, accion }); }
+
+  // Lo que hace el hub con POST /api/v1/usuarios: valida, crea la cuenta e invita.
+  function crearUsuario(email, nombre, tenantId, rol) {
+    const u = usuarioActual();
+    email = (email || '').trim().toLowerCase();
+    if (!administraUsuarios(u, tenantId)) { toast(`Tu rol (${ROLES[u.rol].nombre}) no da de alta usuarios en ese cliente`, true); return null; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast('Ese email no es válido', true); return null; }
+    if (S.usuarios.some(x => x.email.toLowerCase() === email)) { toast('Ya hay un usuario con ese email', true); return null; }
+    nombre = (nombre || '').trim() || email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const x = { id: nuevoId(), nombre, email, tenant: tenantId, rol };
+    S.usuarios.push(x);
+    auditar(`Usuario dado de alta: ${email} como ${ROLES[rol].nombre}`, tenantId);
+    S.mails.unshift({ fecha: ahora(), tenant: tenantId, para: email, asunto: 'Te invitaron a deployCenter', cuerpo: `${u.nombre} te dio de alta como ${ROLES[rol].nombre}. Elegí tu contraseña y configurá el segundo factor.` });
+    guardar();
+    return x;
+  }
 
   function toast(txt, err) {
     const el = document.createElement('div');
@@ -502,7 +525,7 @@
   function vUsuarios() {
     const u = usuarioActual(), t = tenant(u.tenant);
     const us = S.usuarios.filter(x => x.tenant === t.id);
-    const admin = u.rol === 'aprobador';
+    const admin = administraUsuarios(u, t.id);
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Usuarios y roles</span><h1>Quién puede hacer qué en ${esc(t.nombre)}</h1>
       <p>El despliegue lo opera tu organización. Los roles aplican solo dentro de tu tenant.</p></div>
@@ -844,6 +867,7 @@
     parametria: { titulo: 'Parametría', icono: I.sliders, render: vParametria },
     releases: { titulo: 'Releases', icono: I.tag, render: vReleases },
     agentes: { titulo: 'Agentes', icono: I.cpu, render: vAgentes, cuenta: () => S.agentes.filter(a => a.estado !== 'online').length || '' },
+    usuarios: { titulo: 'Usuarios de clientes', icono: I.users, render: vUsuariosClientes },
     auditoria: { titulo: 'Auditoría', icono: I.list, render: vAuditoria }
   };
 
@@ -1017,6 +1041,27 @@
       <div class="aviso a-info">${I.shield}<div><b>Catálogo cerrado de operaciones:</b> pull, up, down, logs y rollback, sobre los stacks de Accusys y con imágenes de <code>registry.accusys.com.ar</code>. No existe un shell remoto.</div></div>`;
   }
 
+  function vUsuariosClientes() {
+    const u = usuarioActual(), admin = ADMIN_CLIENTES.includes(u.rol), f = UI.filtroUsu;
+    const us = S.usuarios.filter(x => x.tenant && (!f || x.tenant === f))
+      .sort((a, b) => a.tenant.localeCompare(b.tenant) || a.nombre.localeCompare(b.nombre));
+    return `
+      <div class="cabecera"><div class="t"><span class="eyebrow">Usuarios de clientes</span><h1>Alta y roles de la gente de cada cliente</h1>
+      <p>Comercial y Publicador dan de alta usuarios en cualquier cliente; el Aprobador de cada organización administra los suyos. No hace falta conocer el ID: se crea la cuenta, se manda la invitación y el ID vuelve con el usuario creado.</p></div>
+      <div class="fila">
+        <select data-f="usu-t" aria-label="Filtrar por cliente" style="width:auto"><option value="">Todos los clientes</option>${S.tenants.map(t => `<option value="${t.id}" ${f === t.id ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select>
+        <button class="btn btn-pri" data-a="alta-usuario" ${admin ? '' : 'disabled title="Dan de alta usuarios Comercial y Publicador"'}>${I.plus} Dar de alta usuario</button>
+      </div></div>
+      <section class="panel"><div class="tabla-wrap"><table><thead><tr><th>Usuario</th><th>Cliente</th><th>Rol</th><th>ID</th><th></th></tr></thead><tbody>
+        ${us.map(x => `<tr><td><b>${esc(x.nombre)}</b><span class="sub">${esc(x.email)}</span></td>
+          <td>${esc(tenant(x.tenant).nombre)}</td>
+          <td>${admin ? `<select data-f="rol-usuario" data-id="${x.id}" aria-label="Rol de ${esc(x.nombre)}">${['lector', 'operador', 'aprobador'].map(r => `<option value="${r}" ${x.rol === r ? 'selected' : ''}>${ROLES[r].nombre}</option>`).join('')}</select>` : `<span class="pill p-info sin-punto">${ROLES[x.rol].nombre}</span>`}</td>
+          <td><code class="chico">${esc(x.id)}</code></td>
+          <td>${admin ? `<button class="btn btn-fantasma btn-chico" data-a="baja-usuario" data-id="${x.id}">Dar de baja</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="vacio">Ese cliente todavía no tiene usuarios.</td></tr>'}
+      </tbody></table></div></section>
+      ${admin ? '' : `<div class="aviso a-info">${I.info}<div>Estás como <b>${ROLES[u.rol].nombre}</b>: los usuarios de clientes los dan de alta Comercial y Publicador.${MODO === 'hub' ? '' : ' Cambiá de usuario arriba a la derecha para probarlo.'}</div></div>`}`;
+  }
+
   function vAuditoria() {
     const f = UI.filtroAud;
     let filas = S.historial.map(h => ({ fecha: h.fecha, tenant: h.tenant, tipo: h.tipo, txt: `${prod(h.producto).nombre} ${amb(h.ambiente)}: ${h.desde} → ${h.hacia}`, res: h.resultado, por: h.por, id: h.id }))
@@ -1141,7 +1186,7 @@
       t = 'Revocar agente';
       c = `<p>Se revocan el token de <code>${esc(a.host)}</code> y su credencial del registry. El servidor no se toca; los stacks siguen corriendo como están.</p>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-peligro" data-a="revocar" data-id="${a.id}">Revocar</button>`;
-    } else if (m.tipo === 'alta-usuario') {
+    } else if (m.tipo === 'alta-usuario-id') {
       const fijo = m.tenant ? tenant(m.tenant) : tenant(usuarioActual().tenant);
       t = `Alta de usuario · ${fijo.nombre}`;
       c = `<p class="chico suave">La persona tiene que existir en el proveedor de identidad (el registro abierto está cerrado: la crea Accusys). Al ingresar sin alta, la pantalla le muestra su id: pedíselo y cargalo acá.</p>
@@ -1160,6 +1205,21 @@
       c = `<div class="campo"><label for="inv-mail">Email</label><input type="email" id="inv-mail" value="nuevo.operador@${tenant(usuarioActual().tenant).id}.example"></div>
         <div class="campo"><label for="inv-rol">Rol</label><select id="inv-rol"><option value="lector">Lector</option><option value="operador" selected>Operador</option><option value="aprobador">Aprobador</option></select></div>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="enviar-invitacion">Enviar invitación</button>`;
+    } else if (m.tipo === 'alta-usuario') {
+      const pre = UI.filtroUsu || (S.tenants[0] || {}).id;
+      t = 'Dar de alta usuario';
+      c = `<div class="campo"><label for="alta-mail">Email</label><input type="email" id="alta-mail" placeholder="nombre@cliente.example"></div>
+        <div class="campo"><label for="alta-nombre">Nombre</label><input id="alta-nombre" placeholder="Nombre y apellido"></div>
+        <div class="campo"><label for="alta-t">Cliente</label><select id="alta-t">${S.tenants.map(x => `<option value="${x.id}" ${x.id === pre ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select></div>
+        <div class="campo"><label for="alta-rol">Rol</label><select id="alta-rol"><option value="lector">Lector</option><option value="operador" selected>Operador</option><option value="aprobador">Aprobador</option></select></div>
+        <p class="suave chico">El ID no se carga: la cuenta se crea en el proveedor de identidad, que manda la invitación y devuelve el ID. La persona elige su contraseña y enrola el segundo factor.</p>`;
+      pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="crear-usuario">Crear e invitar</button>`;
+    } else if (m.tipo === 'usuario-creado') {
+      const x = S.usuarios.find(y => y.id === m.id);
+      t = 'Usuario creado';
+      c = `<p><b>${esc(x.nombre)}</b> (${esc(x.email)}) quedó como <b>${ROLES[x.rol].nombre}</b> en ${esc(tenant(x.tenant).nombre)}. Le llegó la invitación por mail.</p>
+        <div class="campo"><span class="lbl">ID del usuario</span><div class="cmd">${esc(x.id)}</div></div>`;
+      pie = `<button class="btn btn-sec" data-a="copiar-cmd">Copiar ID</button><button class="btn btn-pri" data-a="cerrar-modal">Listo</button>`;
     } else if (m.tipo === 'reset') {
       t = 'Reiniciar datos de demo';
       c = '<p>Se descartan los despliegues, cambios de parametría y releases que hiciste en este navegador.</p>';
@@ -1423,8 +1483,18 @@
       UI.drawer = { tipo: 'log', id: d.id, orden: null }; render();
       try { const o = await HUB.api('GET', `/ordenes/${encodeURIComponent(d.id)}`); if (UI.drawer && UI.drawer.id === d.id) { UI.drawer.orden = o; render(); } } catch (e) { toast(e.message, true); }
     },
-    'invitar': () => { UI.modal = { tipo: 'alta-usuario' }; render(); },
-    'alta-usuario-tenant': () => { UI.modal = { tipo: 'alta-usuario', tenant: UI.tenantParam }; render(); },
+    'invitar': () => { UI.modal = { tipo: 'alta-usuario-id' }; render(); },
+    'alta-usuario-tenant': () => { UI.modal = { tipo: 'alta-usuario-id', tenant: UI.tenantParam }; render(); },
+    // Usuarios de clientes (Accusys): alta sin id, el hub crea la cuenta e invita
+    'crear-usuario': () => {
+      const cuerpo = { email: $('#alta-mail').value.trim(), nombre: $('#alta-nombre').value.trim() || null, tenant: $('#alta-t').value, rol: $('#alta-rol').value };
+      llamar('POST', '/usuarios', cuerpo)
+        .then(async r => { await recargar(true); UI.modal = { tipo: 'usuario-creado', id: r.usuario_id }; render(); }).catch(() => {});
+    },
+    'baja-usuario': d => {
+      const x = S.usuarios.find(y => y.id === d.id);
+      llamar('DELETE', `/usuarios/${encodeURIComponent(d.id)}`, null, `${x ? x.nombre : 'Usuario'} dado de baja`).then(() => recargar()).catch(() => {});
+    },
     'enviar-alta': d => {
       const id = $('#alta-id').value.trim();
       llamar('PUT', `/usuarios/${encodeURIComponent(id)}`, { rol: $('#alta-rol').value, tenant: d.t, email: $('#alta-mail').value.trim() || null, nombre: $('#alta-nombre').value.trim() || null }, 'Usuario dado de alta')
@@ -1590,9 +1660,19 @@
     },
     'invitar': () => { UI.modal = { tipo: 'invitar' }; render(); },
     'enviar-invitacion': () => {
-      const u = usuarioActual(), mailTxt = $('#inv-mail').value, rol = $('#inv-rol').value;
-      S.usuarios.push({ id: 'u' + Date.now(), nombre: mailTxt.split('@')[0].replace(/\./g, ' ').replace(/\b\w/g, c => c.toUpperCase()), email: mailTxt, tenant: u.tenant, rol });
-      UI.modal = null; guardar(); render(); toast('Invitación enviada a ' + mailTxt);
+      const u = usuarioActual();
+      const x = crearUsuario($('#inv-mail').value, '', u.tenant, $('#inv-rol').value);
+      if (x) { UI.modal = { tipo: 'usuario-creado', id: x.id }; render(); }
+    },
+    'alta-usuario': () => { UI.modal = { tipo: 'alta-usuario' }; render(); },
+    'crear-usuario': () => {
+      const x = crearUsuario($('#alta-mail').value, $('#alta-nombre').value, $('#alta-t').value, $('#alta-rol').value);
+      if (x) { UI.modal = { tipo: 'usuario-creado', id: x.id }; render(); }
+    },
+    'baja-usuario': d => {
+      const x = S.usuarios.find(y => y.id === d.id);
+      S.usuarios = S.usuarios.filter(y => y.id !== d.id);
+      auditar(`Usuario dado de baja: ${x.email}`, x.tenant); guardar(); render(); toast(`${x.nombre} dado de baja`);
     },
     // Accusys
     'ver-parque': d => { UI.drawer = { tipo: 'parque', t: d.t, p: d.p }; render(); },
@@ -1656,6 +1736,7 @@
     else if (f === 'simular') DEP.simularFallo = el.checked;
     else if (f === 'rol-usuario') { const x = S.usuarios.find(u => u.id === el.dataset.id); x.rol = el.value; guardar(); toast(`${x.nombre} ahora es ${ROLES[x.rol].nombre}`); }
     else if (f === 'aud-t') { UI.filtroAud.tenant = el.value; render(); }
+    else if (f === 'usu-t') { UI.filtroUsu = el.value; render(); }
     else if (f === 'aud-tipo') { UI.filtroAud.tipo = el.value; render(); }
     else if (f === 'param') {
       const t = tenant(UI.tenantParam), p = tp(t.id, el.dataset.p), k = el.dataset.k;

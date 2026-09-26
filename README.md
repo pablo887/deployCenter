@@ -339,8 +339,26 @@ el acto, sin esperar a que venza su sesión.
 | Operador | Cliente | ordenar preflight, despliegue y rollback; cancelar |
 | Aprobador | Cliente | administrar usuarios de su organización; habilitar a Accusys por un plazo |
 | Soporte | Accusys | ver todo el parque; emitir códigos y revocar agentes; ordenar **solo con habilitación vigente del cliente** |
-| Publicador | Accusys | (releases: todavía por el repo y `dc sellar`/`dc firmar`) |
-| Comercial | Accusys | alta de clientes y parametría comercial |
+| Publicador | Accusys | alta y administración de usuarios de clientes (releases: todavía por el repo y `dc sellar`/`dc firmar`) |
+| Comercial | Accusys | alta de clientes, parametría comercial y usuarios de clientes |
+
+**Alta de usuarios sin id.** Comercial y Publicador dan de alta usuarios en
+cualquier cliente; el Aprobador, en el suyo. Nadie carga el id: el hub crea la
+cuenta en el proveedor de identidad, que manda la invitación por mail, y el id
+vuelve en la respuesta, ya con el rol asignado.
+
+```
+POST /api/v1/usuarios   {"email": "ana@andino.example", "nombre": "Ana Paz",
+                         "rol": "operador", "tenant": "andino"}
+→ 201 {"usuario_id": "6f1c…", "rol": "operador", "tenant": "andino", "invitado": true, …}
+```
+
+Los permisos y el cliente se chequean antes de crear la cuenta; si algo falla
+después, la cuenta se borra. Para esto el hub necesita `SUPABASE_SECRET_KEY`
+(sin ella, el alta responde 503 y se puede seguir asignando rol a un id
+conocido con `PUT /api/v1/usuarios/{id}`), y el proyecto de Supabase un SMTP
+propio: el que trae por defecto solo entrega a los miembros del proyecto. Los
+usuarios de Accusys se siguen dando de alta solo por consola.
 
 **Dos barreras.** El hub chequea el rol en la aplicación y, en Postgres, además
 corre cada operación de una persona con su identidad (`set local role
@@ -369,7 +387,10 @@ python ejemplos/integracion-supabase.py
 
 export DC_HUB_DB=postgresql+psycopg://…     # la conexión a Postgres del proyecto
 export SUPABASE_URL=https://<proyecto>.supabase.co   # de acá salen JWKS y emisor
-dc-hub usuario <uuid> --rol soporte --nombre "…"      # los de Accusys, solo por consola
+export SUPABASE_SECRET_KEY=sb_secret_…     # alta de usuarios; no sale del hub
+export DC_URL_WEB=https://deploy.accusys.com.ar      # a dónde lleva el link de la invitación
+dc-hub invitar nvidal@accusys.example --rol publicador --nombre "…"  # Accusys, solo por consola
+dc-hub usuario <uuid> --rol soporte                   # o con el id, si ya tiene cuenta
 dc-hub tenant andino "Banco Andino"
 dc-hub adquirir andino mep --hasta 2026-12-31
 dc-hub servir --puerto 8000
@@ -377,6 +398,7 @@ dc-hub servir --puerto 8000
 # desarrollo local, sin proveedor: SQLite y tokens firmados con un secreto
 export DC_JWT_SECRET=<32+ caracteres> DC_HUB_DB=sqlite:///hub.db
 dc-hub usuario <uuid> --rol operador --tenant andino
+dc-hub invitar ana@andino.example --rol operador --tenant andino   # genera el id
 dc-hub token-dev <uuid>                # JWT con aal2, para probar la API
 ```
 
@@ -439,7 +461,8 @@ Del lado del cliente muestra las instalaciones, el catálogo con la regla de
 habilitación, el despliegue (preflight, variables, doble aprobación,
 verificación y rollback con cuenta regresiva), el historial y los usuarios. Del
 lado de Accusys muestra el tablero de parque, la parametría comercial, la
-publicación de releases, los agentes y la auditoría. Desde el menú de usuario se
+publicación de releases, los agentes, los usuarios de clientes (alta sin id
+para Comercial y Publicador) y la auditoría. Desde el menú de usuario se
 cambia de rol.
 
 | Archivo | Contenido |
