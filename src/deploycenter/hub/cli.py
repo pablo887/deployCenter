@@ -5,6 +5,7 @@
     dc-hub servir      --puerto 8000
     dc-hub usuario     <uuid> --rol soporte
     dc-hub usuario     <uuid> --rol aprobador --tenant andino
+    dc-hub invitar     ana@andino.example --rol operador --tenant andino
     dc-hub token-dev   <uuid>
     dc-hub tenant      andino "Banco Andino"
     dc-hub adquirir    andino mep --hasta 2026-12-31
@@ -30,7 +31,7 @@ from pathlib import Path
 
 from ..errores import ErrorDeployCenter
 from ..salida import ERROR_USO, FALLA_VALIDACION, OK, paleta, preparar_salida, simbolos, usar_color
-from . import migraciones
+from . import migraciones, proveedor
 from . import servicio as srv
 
 DB_POR_DEFECTO = "sqlite:///hub.db"
@@ -45,7 +46,7 @@ def _catalogo_por_defecto():
 
 
 def _hub(args):
-    return srv.Hub.desde_url(args.db, args.catalogo)
+    return srv.Hub.desde_url(args.db, args.catalogo, proveedor=proveedor.desde_entorno())
 
 
 def _imprimir(datos):
@@ -76,6 +77,11 @@ def cmd_servir(args):
               f"DC_JWT_*): la API de la web queda cerrada; el canal de los agentes funciona igual")
     elif validador.secreto:
         print(f"  {gris}identidad: secreto HS256 compartido{fin}")
+    if hub.proveedor is None:
+        print(f"{amarillo}{s['aviso']}{fin} sin SUPABASE_SECRET_KEY: el alta de usuarios "
+              f"desde la web queda cerrada; se puede asignar rol a un id existente")
+    else:
+        print(f"  {gris}alta de usuarios: {hub.proveedor.nombre}{fin}")
     if hub.es_sqlite:
         print(f"{amarillo}{s['aviso']}{fin} SQLite: sin RLS; los permisos los aplica solo "
               f"el hub. Para producción, Postgres con las migraciones")
@@ -110,6 +116,12 @@ def cmd_usuario(args):
         return OK
     _imprimir(_hub(args).asignar_usuario(args.id, args.rol, tenant_id=args.tenant,
                                          nombre=args.nombre, email=args.email))
+    return OK
+
+
+def cmd_invitar(args):
+    _imprimir(_hub(args).crear_usuario(args.email, args.rol, tenant_id=args.tenant,
+                                       nombre=args.nombre))
     return OK
 
 
@@ -198,6 +210,15 @@ def construir_parser():
     us.add_argument("--email")
     us.add_argument("--quitar", action="store_true")
     us.set_defaults(func=cmd_usuario)
+
+    iv = sub.add_parser("invitar", help="crea la cuenta en el proveedor de identidad, "
+                                        "manda la invitación y asigna el rol")
+    iv.add_argument("email")
+    iv.add_argument("--rol", required=True, choices=["lector", "operador", "aprobador",
+                                                     "soporte", "publicador", "comercial"])
+    iv.add_argument("--tenant", help="cliente, para los roles de cliente")
+    iv.add_argument("--nombre")
+    iv.set_defaults(func=cmd_invitar)
 
     td = sub.add_parser("token-dev", help="emite un JWT de desarrollo firmado con DC_JWT_SECRET")
     td.add_argument("id")

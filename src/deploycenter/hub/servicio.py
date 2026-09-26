@@ -72,6 +72,10 @@ class Conflicto(ErrorHub):
     codigo_http = 409
 
 
+class NoDisponible(ErrorHub):
+    codigo_http = 503
+
+
 class Rechazado(ErrorHub):
     """La orden es entendible pero la parametría o el estado no la permiten."""
 
@@ -103,6 +107,10 @@ class Perfil:
 
 
 CONSOLA = "dc-hub (consola)"
+# Además del Aprobador de cada cliente, administran usuarios de clientes los
+# roles de Accusys que tratan con ellos: Comercial (el alta del cliente) y
+# Publicador (el técnico que publica los releases y acompaña la puesta en marcha).
+ADMINISTRAN_CLIENTES = ("comercial", "publicador")
 MAX_HORAS_HABILITACION = 72
 
 
@@ -136,8 +144,10 @@ def conectar(url_db):
 
 class Hub:
     def __init__(self, engine, catalogo, reloj=ahora_utc,
-                 umbral_en_linea_s=UMBRAL_EN_LINEA_S):
+                 umbral_en_linea_s=UMBRAL_EN_LINEA_S, proveedor=None):
         self.engine = engine
+        # proveedor de identidad: crea las cuentas de las personas (ver proveedor.py)
+        self.proveedor = proveedor
         self.catalogo = catalogo if isinstance(catalogo, Catalogo) else Catalogo(catalogo)
         self.reloj = reloj
         self.umbral_en_linea_s = umbral_en_linea_s
@@ -623,17 +633,28 @@ class Hub:
     # usuarios
     # ------------------------------------------------------------------ #
 
-    def asignar_usuario(self, usuario_id, rol, tenant_id=None, nombre=None, email=None,
-                        perfil=None):
-        """Da de alta o cambia el rol de una persona.
-
-        Los usuarios de un cliente los administra su Aprobador (salvo el propio) o
-        Comercial de Accusys. Los de Accusys, solo la consola: no hay forma de que
-        alguien se dé permisos sobre todo el parque desde la web."""
+    @staticmethod
+    def _uuid(usuario_id):
         try:
-            usuario_id = str(uuid.UUID(str(usuario_id)))
+            return str(uuid.UUID(str(usuario_id)))
         except ValueError:
             raise Rechazado(f"{usuario_id!r} no es un id de usuario válido") from None
+
+    @staticmethod
+    def _exigir_admin_usuarios(perfil, tenant_id, usuario_id=None):
+        """Los usuarios de un cliente los administra su Aprobador (salvo el propio)
+        o Comercial y Publicador de Accusys. Sin perfil, la consola."""
+        if perfil is None or perfil.rol in ADMINISTRAN_CLIENTES:
+            return
+        if perfil.rol == "aprobador":
+            if perfil.tenant != tenant_id:
+                raise Prohibido("solo administrás usuarios de tu organización")
+            if usuario_id is not None and perfil.usuario_id == usuario_id:
+                raise Prohibido("no podés cambiar tu propio rol")
+            return
+        raise Prohibido(f"tu rol ({perfil.rol}) no administra usuarios")
+
+    def _validar_rol(self, perfil, rol, tenant_id, usuario_id=None):
         if rol in m.ROLES_ACCUSYS:
             if perfil is not None:
                 raise Prohibido("los usuarios de Accusys se dan de alta desde la consola")
@@ -642,43 +663,89 @@ class Hub:
         elif rol in m.ROLES_CLIENTE:
             if not tenant_id:
                 raise Rechazado("un usuario de cliente necesita el cliente")
-            if perfil is not None:
-                if perfil.rol == "aprobador":
-                    if perfil.tenant != tenant_id:
-                        raise Prohibido("solo administrás usuarios de tu organización")
-                    if perfil.usuario_id == usuario_id:
-                        raise Prohibido("no podés cambiar tu propio rol")
-                elif perfil.rol != "comercial":
-                    raise Prohibido(f"tu rol ({perfil.rol}) no administra usuarios")
+            self._exigir_admin_usuarios(perfil, tenant_id, usuario_id)
         else:
             raise Rechazado(f"rol desconocido: {rol!r}")
 
-        with self.sesion(perfil) as s:
-            if rol in m.ROLES_ACCUSYS:
-                if s.get(m.UsuarioTenant, usuario_id):
-                    raise Conflicto("ese usuario ya pertenece a un cliente")
-                u = s.get(m.UsuarioAccusys, usuario_id) or m.UsuarioAccusys(usuario_id=usuario_id)
-            else:
-                self._tenant(s, tenant_id)
-                if s.get(m.UsuarioAccusys, usuario_id):
-                    raise Conflicto("ese usuario ya es de Accusys")
-                u = s.get(m.UsuarioTenant, usuario_id)
-                if u is not None and u.tenant_id != tenant_id:
-                    raise Conflicto("ese usuario ya pertenece a otro cliente")
-                u = u or m.UsuarioTenant(usuario_id=usuario_id, tenant_id=tenant_id)
-            u.rol = rol
-            u.nombre = nombre or u.nombre
-            u.email = email or u.email
-            s.add(u)
-            self._auditar(s, perfil, "usuario_rol", tenant_id, usuario=usuario_id, rol=rol)
+    def _guardar_rol(self, s, perfil, usuario_id, rol, tenant_id, nombre, email, accion):
+        if rol in m.ROLES_ACCUSYS:
+            if s.get(m.UsuarioTenant, usuario_id):
+                raise Conflicto("ese usuario ya pertenece a un cliente")
+            u = s.get(m.UsuarioAccusys, usuario_id) or m.UsuarioAccusys(usuario_id=usuario_id)
+        else:
+            self._tenant(s, tenant_id)
+            if s.get(m.UsuarioAccusys, usuario_id):
+                raise Conflicto("ese usuario ya es de Accusys")
+            u = s.get(m.UsuarioTenant, usuario_id)
+            if u is not None and u.tenant_id != tenant_id:
+                raise Conflicto("ese usuario ya pertenece a otro cliente")
+            u = u or m.UsuarioTenant(usuario_id=usuario_id, tenant_id=tenant_id)
+        u.rol = rol
+        u.nombre = nombre or u.nombre
+        u.email = email or u.email
+        s.add(u)
+        self._auditar(s, perfil, accion, tenant_id, usuario=usuario_id, rol=rol)
         return {"usuario_id": usuario_id, "rol": rol, "tenant": tenant_id,
-                "nombre": nombre, "email": email}
+                "nombre": u.nombre, "email": u.email}
+
+    def asignar_usuario(self, usuario_id, rol, tenant_id=None, nombre=None, email=None,
+                        perfil=None):
+        """Cambia el rol de una persona que ya tiene cuenta, o le da el alta si se
+        conoce su id en el proveedor de identidad.
+
+        Los usuarios de un cliente los administra su Aprobador (salvo el propio),
+        Comercial o Publicador de Accusys. Los de Accusys, solo la consola: no hay
+        forma de que alguien se dé permisos sobre todo el parque desde la web."""
+        usuario_id = self._uuid(usuario_id)
+        self._validar_rol(perfil, rol, tenant_id, usuario_id)
+        with self.sesion(perfil) as s:
+            return self._guardar_rol(s, perfil, usuario_id, rol, tenant_id, nombre, email,
+                                     "usuario_rol")
+
+    def crear_usuario(self, email, rol, tenant_id=None, nombre=None, perfil=None):
+        """Da de alta a una persona sin conocer su id: el hub crea la cuenta en el
+        proveedor de identidad, que manda la invitación y devuelve el id.
+
+        Los permisos y el cliente se chequean antes de crear la cuenta, para no
+        dejar cuentas huérfanas. Si igual falla después, la cuenta se borra."""
+        email = (email or "").strip().lower()
+        if "@" not in email or email.startswith("@") or email.endswith("@"):
+            raise Rechazado(f"{email!r} no es un email válido")
+        self._validar_rol(perfil, rol, tenant_id)
+        if self.proveedor is None:
+            raise NoDisponible("el alta de usuarios no está habilitada: falta configurar el "
+                               "proveedor de identidad (SUPABASE_URL y SUPABASE_SECRET_KEY)")
+        from .proveedor import EmailYaRegistrado, ErrorProveedor
+
+        usuario_id = None
+        try:
+            with self.sesion(perfil) as s:
+                if rol in m.ROLES_CLIENTE:
+                    self._tenant(s, tenant_id)
+                for tabla in (m.UsuarioTenant, m.UsuarioAccusys):
+                    if s.scalar(select(tabla.usuario_id).where(tabla.email == email)):
+                        raise Conflicto(f"ya hay un usuario con el email {email}")
+                try:
+                    usuario_id = self.proveedor.invitar(email, nombre)
+                except EmailYaRegistrado:
+                    raise Conflicto(
+                        f"{email} ya tiene cuenta en el proveedor de identidad; asignale el "
+                        f"rol con su id") from None
+                except ErrorProveedor as e:
+                    raise (Rechazado if e.es_del_pedido else NoDisponible)(str(e)) from None
+                datos = self._guardar_rol(s, perfil, usuario_id, rol, tenant_id, nombre,
+                                          email, "usuario_alta")
+        except Exception:
+            if usuario_id is not None:
+                try:
+                    self.proveedor.borrar(usuario_id)
+                except ErrorProveedor:  # pragma: no cover - queda en el proveedor, sin rol
+                    pass
+            raise
+        return {**datos, "invitado": True}
 
     def quitar_usuario(self, usuario_id, perfil=None):
-        try:
-            usuario_id = str(uuid.UUID(str(usuario_id)))
-        except ValueError:
-            raise Rechazado(f"{usuario_id!r} no es un id de usuario válido") from None
+        usuario_id = self._uuid(usuario_id)
         with self.sesion(perfil) as s:
             u = s.get(m.UsuarioTenant, usuario_id)
             if u is None:
@@ -687,12 +754,9 @@ class Hub:
                     self._auditar(s, perfil, "usuario_baja", None, usuario=usuario_id)
                     return
                 raise NoEncontrado(f"no existe el usuario {usuario_id}")
-            if perfil is not None:
-                if perfil.rol == "aprobador" and perfil.tenant == u.tenant_id:
-                    if perfil.usuario_id == usuario_id:
-                        raise Prohibido("no podés darte de baja a vos mismo")
-                elif perfil.rol != "comercial":
-                    raise Prohibido(f"tu rol ({perfil.rol}) no administra usuarios")
+            if perfil is not None and perfil.usuario_id == usuario_id:
+                raise Prohibido("no podés darte de baja a vos mismo")
+            self._exigir_admin_usuarios(perfil, u.tenant_id)
             s.delete(u)
             self._auditar(s, perfil, "usuario_baja", u.tenant_id, usuario=usuario_id)
 
