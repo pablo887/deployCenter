@@ -24,7 +24,7 @@ AHORA = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, micros
 
 U = {nombre: str(uuid.uuid4()) for nombre in (
     "operador_andino", "aprobador_andino", "lector_andino", "operador_litoral",
-    "soporte", "comercial", "sin_alta")}
+    "soporte", "comercial", "publicador", "sin_alta")}
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def db(postgres_url):
                                 "operador_litoral": ("litoral", "operador")}.items():
             c.execute(text("insert into usuarios_tenant (usuario_id, tenant_id, rol)"
                            " values (:u, :t, :r)"), {"u": U[clave], "t": t, "r": rol})
-        for clave in ("soporte", "comercial"):
+        for clave in ("soporte", "comercial", "publicador"):
             c.execute(text("insert into usuarios_accusys (usuario_id, rol) values (:u, :r)"),
                       {"u": U[clave], "r": clave})
     yield engine
@@ -267,6 +267,20 @@ class TestUsuariosYParametria:
 
     def test_el_operador_no_administra_usuarios(self, db):
         with como(db, "operador_andino") as c:
+            falla(c, "insert into usuarios_tenant (usuario_id, tenant_id, rol)"
+                     " values (:u, 'andino', 'operador')", {"u": str(uuid.uuid4())})
+
+    @pytest.mark.parametrize("quien", ["comercial", "publicador"])
+    def test_accusys_da_de_alta_usuarios_de_clientes(self, db, quien):
+        with como(db, quien) as c:
+            c.execute(text("insert into usuarios_tenant (usuario_id, tenant_id, rol)"
+                           " values (:u, 'litoral', 'operador')"), {"u": str(uuid.uuid4())})
+            r = c.execute(text("update usuarios_tenant set rol = 'lector'"
+                               " where usuario_id = :u"), {"u": U["operador_andino"]})
+            assert r.rowcount == 1
+
+    def test_soporte_no_administra_usuarios(self, db):
+        with como(db, "soporte") as c:
             falla(c, "insert into usuarios_tenant (usuario_id, tenant_id, rol)"
                      " values (:u, 'andino', 'operador')", {"u": str(uuid.uuid4())})
 

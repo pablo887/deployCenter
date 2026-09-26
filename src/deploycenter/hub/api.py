@@ -103,6 +103,12 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0):
         nombre: str | None = Field(default=None, max_length=200)
         email: str | None = Field(default=None, max_length=320)
 
+    class PedidoAlta(BaseModel):
+        email: str = Field(max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+        rol: str = Field(max_length=20)
+        tenant: str | None = Field(default=None, max_length=40)
+        nombre: str | None = Field(default=None, max_length=200)
+
     # -- errores -------------------------------------------------------------- #
 
     @app.exception_handler(srv.ErrorHub)
@@ -269,6 +275,13 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0):
     @app.get("/api/v1/usuarios")
     def usuarios(p: Persona, tenant: str | None = None):
         return hub.usuarios(perfil=p, tenant_id=tenant)
+
+    @app.post("/api/v1/usuarios", status_code=201)
+    def alta_usuario(pedido: PedidoAlta, p: Persona):
+        """Alta sin id: el hub crea la cuenta e invita por mail; el id vuelve en la
+        respuesta."""
+        return hub.crear_usuario(pedido.email, pedido.rol, tenant_id=pedido.tenant,
+                                 nombre=pedido.nombre, perfil=p)
 
     @app.put("/api/v1/usuarios/{usuario_id}")
     def asignar_usuario(usuario_id: str, pedido: PedidoUsuario, p: Persona):

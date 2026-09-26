@@ -17,7 +17,8 @@ SECRETO = "secreto-de-prueba-de-al-menos-32-bytes!!"
 EMISOR = "https://proyecto.supabase.co/auth/v1"
 
 U = {n: str(uuid.uuid4()) for n in (
-    "operador", "aprobador", "lector", "operador_otro", "soporte", "comercial", "sin_alta")}
+    "operador", "aprobador", "lector", "operador_otro", "soporte", "comercial", "publicador",
+    "sin_alta")}
 
 
 def token(quien, aal="aal2", **kw):
@@ -41,6 +42,7 @@ def personas(hub):
     hub.asignar_usuario(U["operador_otro"], "operador", "otro")
     hub.asignar_usuario(U["soporte"], "soporte", nombre="Sofía Herrera")
     hub.asignar_usuario(U["comercial"], "comercial")
+    hub.asignar_usuario(U["publicador"], "publicador", nombre="Nicolás Vidal")
     return U
 
 
@@ -259,6 +261,107 @@ class TestUsuarios:
         r = cliente.put(f"/api/v1/usuarios/{uuid.uuid4()}", headers=como("operador"),
                         json={"rol": "lector", "tenant": "andino"})
         assert r.status_code == 403
+
+
+class TestAltaSinId:
+    """El alta crea la cuenta en el proveedor de identidad y devuelve el id."""
+
+    @pytest.fixture
+    def proveedor(self, hub):
+        from deploycenter.hub.proveedor import ProveedorLocal
+
+        hub.proveedor = ProveedorLocal()
+        return hub.proveedor
+
+    def alta(self, cliente, quien, **cuerpo):
+        cuerpo = {"email": "ana@andino.example", "rol": "operador", "tenant": "andino",
+                  **cuerpo}
+        return cliente.post("/api/v1/usuarios", headers=como(quien), json=cuerpo)
+
+    @pytest.mark.parametrize("quien", ["comercial", "publicador", "aprobador"])
+    def test_crea_y_devuelve_el_id(self, cliente, proveedor, quien):
+        r = self.alta(cliente, quien, email="Ana@Andino.example", nombre="Ana Paz")
+        assert r.status_code == 201, r.text
+        datos = r.json()
+        assert uuid.UUID(datos["usuario_id"])
+        assert datos["usuario_id"] == proveedor.emails["ana@andino.example"]
+        assert datos["email"] == "ana@andino.example"
+        assert datos["invitado"] is True
+        usuarios = cliente.get("/api/v1/usuarios", headers=como("aprobador")).json()
+        assert {"usuario_id": datos["usuario_id"], "tenant": "andino", "rol": "operador",
+                "nombre": "Ana Paz", "email": "ana@andino.example"} in usuarios
+
+    def test_la_persona_nueva_entra_con_su_id(self, cliente, proveedor):
+        uid = self.alta(cliente, "publicador").json()["usuario_id"]
+        yo = cliente.get("/api/v1/yo", headers={"Authorization": "Bearer " + token_de_desarrollo(
+            SECRETO, uid, emisor=EMISOR)}).json()
+        assert yo["rol"] == "operador" and yo["tenant"] == "andino"
+
+    def test_comercial_y_publicador_dan_de_alta_en_cualquier_cliente(self, cliente, proveedor):
+        for quien in ("comercial", "publicador"):
+            r = self.alta(cliente, quien, email=f"{quien}@otro.example", tenant="otro")
+            assert r.status_code == 201
+
+    @pytest.mark.parametrize("quien,cuerpo", [
+        ("aprobador", {"tenant": "otro"}),
+        ("operador", {}),
+        ("lector", {}),
+        ("soporte", {}),
+        ("comercial", {"rol": "soporte", "tenant": None}),
+        ("publicador", {"rol": "publicador", "tenant": None}),
+    ])
+    def test_quien_no_puede(self, cliente, proveedor, quien, cuerpo):
+        assert self.alta(cliente, quien, **cuerpo).status_code == 403
+        assert proveedor.emails == {}   # no quedó ninguna cuenta creada
+
+    def test_cliente_inexistente_no_crea_la_cuenta(self, cliente, proveedor):
+        assert self.alta(cliente, "comercial", tenant="nadie").status_code == 404
+        assert proveedor.emails == {}
+
+    def test_email_repetido(self, cliente, proveedor):
+        assert self.alta(cliente, "comercial").status_code == 201
+        r = self.alta(cliente, "publicador")
+        assert r.status_code == 409
+        assert len(proveedor.emails) == 1
+
+    def test_email_invalido(self, cliente, proveedor):
+        assert self.alta(cliente, "comercial", email="ana").status_code == 422
+
+    def test_sin_proveedor_configurado(self, cliente, hub):
+        hub.proveedor = None
+        r = self.alta(cliente, "comercial")
+        assert r.status_code == 503
+        assert "SUPABASE_SECRET_KEY" in r.json()["detalle"]
+
+    def test_si_falla_la_base_se_borra_la_cuenta(self, cliente, proveedor, monkeypatch):
+        from deploycenter.hub import servicio as srv
+
+        def rompe(*_a, **_k):
+            raise srv.Conflicto("la base dijo que no")
+
+        monkeypatch.setattr(srv.Hub, "_guardar_rol", rompe)
+        assert self.alta(cliente, "comercial").status_code == 409
+        assert proveedor.emails == {}
+
+    def test_queda_en_la_auditoria(self, cliente, proveedor):
+        uid = self.alta(cliente, "publicador").json()["usuario_id"]
+        registros = cliente.get("/api/v1/auditoria", headers=como("aprobador")).json()
+        alta = [r for r in registros if r["accion"] == "usuario_alta"][0]
+        assert alta["usuario"] == "Nicolás Vidal"
+        assert alta["detalle"] == {"usuario": uid, "rol": "operador"}
+
+
+class TestPublicadorAdministraUsuarios:
+    def test_cambia_el_rol_y_da_de_baja(self, cliente):
+        r = cliente.put(f"/api/v1/usuarios/{U['lector']}", headers=como("publicador"),
+                        json={"rol": "aprobador", "tenant": "andino"})
+        assert r.status_code == 200
+        assert cliente.delete(f"/api/v1/usuarios/{U['lector']}",
+                              headers=como("publicador")).status_code == 200
+
+    def test_soporte_no_administra_usuarios(self, cliente):
+        assert cliente.delete(f"/api/v1/usuarios/{U['lector']}",
+                              headers=como("soporte")).status_code == 403
 
 
 class TestAuditoria:

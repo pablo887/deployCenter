@@ -19,7 +19,7 @@ from sqlalchemy.orm.exc import StaleDataError  # noqa: E402
 from deploycenter.hub import servicio as srv  # noqa: E402
 
 U = {n: str(uuid.uuid4()) for n in (
-    "operador", "aprobador", "lector", "operador_otro", "soporte", "comercial")}
+    "operador", "aprobador", "lector", "operador_otro", "soporte", "comercial", "publicador")}
 
 
 def reloj_real():
@@ -38,6 +38,7 @@ def hub_pg(postgres_url, catalogo):
     hub.asignar_usuario(U["operador_otro"], "operador", "otro")
     hub.asignar_usuario(U["soporte"], "soporte")
     hub.asignar_usuario(U["comercial"], "comercial")
+    hub.asignar_usuario(U["publicador"], "publicador")
     yield hub
     hub.engine.dispose()
 
@@ -108,6 +109,16 @@ class TestCircuitoConRLS:
         assert roles[nuevo] == "operador" and roles[U["lector"]] == "operador"
         hub_pg.quitar_usuario(nuevo, perfil=apr)
 
+    def test_el_publicador_da_de_alta_sin_id(self, hub_pg):
+        from deploycenter.hub.proveedor import ProveedorLocal
+
+        hub_pg.proveedor = ProveedorLocal()
+        pub = perfil(hub_pg, "publicador")
+        datos = hub_pg.crear_usuario("ana@otro.example", "aprobador", "otro", perfil=pub)
+        assert datos["usuario_id"] == hub_pg.proveedor.emails["ana@otro.example"]
+        nueva = hub_pg.perfil({"sub": datos["usuario_id"], "aal": "aal2"})
+        assert (nueva.rol, nueva.tenant) == ("aprobador", "otro")
+
     def test_la_auditoria_queda_con_la_persona(self, hub_pg, agente):
         hub_pg.crear_orden(agente["agente_id"], "mep", "preflight", "4.7.0",
                            perfil=perfil(hub_pg, "operador"))
@@ -148,6 +159,17 @@ class TestLaBaseEsLaSegundaBarrera:
         with pytest.raises(StaleDataError):
             hub_pg.adquirir("andino", "mep", "2030-01-01", perfil=perfil(hub_pg, "operador"))
         assert hub_pg.parametria("andino")["productos"][0]["mantenimiento_hasta"] == "2026-12-31"
+
+    def test_soporte_no_da_de_alta_usuarios_aunque_el_hub_lo_deje(self, hub_pg, monkeypatch):
+        from deploycenter.hub.proveedor import ProveedorLocal
+
+        monkeypatch.setattr(srv.Hub, "_exigir_admin_usuarios",
+                            staticmethod(lambda perfil, t, u=None: None))
+        hub_pg.proveedor = ProveedorLocal()
+        with pytest.raises(DBAPIError, match="row-level security"):
+            hub_pg.crear_usuario("ana@andino.example", "operador", "andino",
+                                 perfil=perfil(hub_pg, "soporte"))
+        assert hub_pg.proveedor.emails == {}   # la cuenta se borró al fallar la base
 
     def test_el_operador_no_emite_codigos_aunque_el_hub_lo_deje(self, hub_pg, sin_chequeos):
         with pytest.raises(DBAPIError, match="row-level security"):
