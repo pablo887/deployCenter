@@ -344,21 +344,32 @@ el acto, sin esperar a que venza su sesión.
 
 **Alta de usuarios sin id.** Comercial y Publicador dan de alta usuarios en
 cualquier cliente; el Aprobador, en el suyo. Nadie carga el id: el hub crea la
-cuenta en el proveedor de identidad, que manda la invitación por mail, y el id
-vuelve en la respuesta, ya con el rol asignado.
+cuenta en el proveedor de identidad y devuelve el id, ya con el rol asignado, y
+el link para que la persona elija su contraseña y active el segundo factor.
 
 ```
 POST /api/v1/usuarios   {"email": "ana@andino.example", "nombre": "Ana Paz",
                          "rol": "operador", "tenant": "andino"}
-→ 201 {"usuario_id": "6f1c…", "rol": "operador", "tenant": "andino", "invitado": true, …}
+→ 201 {"usuario_id": "6f1c…", "rol": "operador", "tenant": "andino",
+       "link": "https://<proyecto>.supabase.co/auth/v1/verify?…", "nueva": true, …}
+POST /api/v1/usuarios/{id}/acceso   → {"link": …}   # perdió la contraseña o el link
 ```
 
-Los permisos y el cliente se chequean antes de crear la cuenta; si algo falla
-después, la cuenta se borra. Para esto el hub necesita `SUPABASE_SECRET_KEY`
-(sin ella, el alta responde 503 y se puede seguir asignando rol a un id
-conocido con `PUT /api/v1/usuarios/{id}`), y el proyecto de Supabase un SMTP
-propio: el que trae por defecto solo entrega a los miembros del proyecto. Los
-usuarios de Accusys se siguen dando de alta solo por consola.
+- **El link no depende del mail.** Quien da el alta lo recibe y lo manda por
+  el canal que quiera. El servidor de mails que trae Supabase manda muy pocos
+  y solo a los miembros del proyecto; con un SMTP propio, el mismo link puede
+  salir por mail.
+- **Si el email ya tenía cuenta** (alguien dado de baja que vuelve), recibe el
+  rol y un link de recuperación.
+- **Los permisos y el cliente se chequean antes de crear la cuenta.** Si algo
+  falla después, la cuenta nueva se borra; una que ya existía no se toca.
+- **Qué necesita:** el hub necesita `SUPABASE_SECRET_KEY`. Sin ella, el alta
+  responde 503 y se puede seguir asignando rol a un id conocido con
+  `PUT /api/v1/usuarios/{id}`.
+- **Adónde vuelve el link:** a `DC_URL_WEB` o, si no está, a la URL con la que
+  se entró. Esa URL tiene que estar en las *Redirect URLs* del proyecto de
+  Supabase.
+- Los usuarios de Accusys se siguen dando de alta solo por consola.
 
 **Dos barreras.** El hub chequea el rol en la aplicación y, en Postgres, además
 corre cada operación de una persona con su identidad (`set local role
@@ -388,7 +399,7 @@ python ejemplos/integracion-supabase.py
 export DC_HUB_DB=postgresql+psycopg://…     # la conexión a Postgres del proyecto
 export SUPABASE_URL=https://<proyecto>.supabase.co   # de acá salen JWKS y emisor
 export SUPABASE_SECRET_KEY=sb_secret_…     # alta de usuarios; no sale del hub
-export DC_URL_WEB=https://deploy.accusys.com.ar      # a dónde lleva el link de la invitación
+export DC_URL_WEB=https://deploy.accusys.com.ar      # adónde vuelve el link de alta
 dc-hub invitar nvidal@accusys.example --rol publicador --nombre "…"  # Accusys, solo por consola
 dc-hub usuario <uuid> --rol soporte                   # o con el id, si ya tiene cuenta
 dc-hub tenant andino "Banco Andino"
@@ -425,6 +436,11 @@ docker compose exec hub dc-hub usuario <uuid> --rol comercial --email vos@accusy
 
 Desde ahí, Comercial crea los clientes, sus productos y sus usuarios desde la
 web; Soporte emite los códigos para enrolar agentes.
+
+Para dar de alta usuarios por email desde la web, agregá `SUPABASE_SECRET_KEY`
+al `.env` y la URL del hub a las *Redirect URLs* del proyecto de Supabase (ver
+`.env.ejemplo`). Quien da el alta recibe el link y lo manda por el canal que
+quiera: Supabase sin SMTP propio casi no manda mails.
 
 Para ver un despliegue real sin salir de tu máquina, el perfil `agente-demo`
 suma un agente y un producto de prueba (nginx, con un release roto a propósito
@@ -524,8 +540,11 @@ que no pasa por ahí no llega a main.
 - [x] Registro abierto cerrado en `deploycenter-dev`: las altas van solo por
       la secret key (o las invitaciones, cuando estén)
 - [ ] Dominio propio para Auth (`auth.accusys.com.ar`)
-- [ ] Invitaciones: hoy el usuario se crea en el proveedor y se le asigna el rol
-      con `dc-hub usuario` o la API; falta que el hub mande la invitación
+- [x] Alta sin id desde la web: el hub crea la cuenta y devuelve el link para
+      elegir contraseña (sin depender del mail); link de acceso para quien lo
+      perdió, "olvidé mi contraseña" y cambio de contraseña desde la web
+- [ ] Aviso por mail del alta: necesita un SMTP propio en Supabase o un
+      proveedor de mails en el hub
 - [ ] Variables nuevas desde la web: el formulario tiene que escribir en el
       `.env` del servidor sin que el valor pase por el hub
 - [ ] Órdenes entregadas sin respuesta: si el agente muere después de tomar

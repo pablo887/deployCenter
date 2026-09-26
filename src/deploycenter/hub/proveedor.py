@@ -2,19 +2,24 @@
 
 Para dar de alta a una persona desde la web no hace falta conocer su id: el hub
 crea la cuenta en el proveedor, que devuelve el id, y con ese id se carga el
-rol. La persona recibe un mail de invitación para elegir su contraseña y
-enrolar el segundo factor; nadie más conoce su contraseña.
+rol. La persona entra con un link para elegir su contraseña y enrolar el segundo
+factor; nadie más conoce su contraseña.
 
-- **Supabase** (`ProveedorSupabase`): `POST /auth/v1/invite` de la API de
-  administración de Auth, con la clave secreta del proyecto. Esa clave saltea
-  la RLS y administra cuentas, así que vive solo en el hub, en el perímetro de
-  Accusys: nunca en la web ni en el agente.
+- **Supabase** (`ProveedorSupabase`): `POST /auth/v1/admin/generate_link` de la
+  API de administración de Auth, con la clave secreta del proyecto. Esa clave
+  saltea la RLS y administra cuentas, así que vive solo en el hub, en el
+  perímetro de Accusys: nunca en la web ni en el agente.
 - **Local** (`ProveedorLocal`): para desarrollo con `DC_JWT_SECRET`. Genera el
-  id y no manda mails; el token de esa persona se emite con `dc-hub token-dev`.
+  id y no hay link; el token de esa persona se emite con `dc-hub token-dev`.
 
-Para mandar invitaciones a direcciones de clientes, el proyecto de Supabase
-necesita un SMTP propio (Authentication → Emails → SMTP Settings): el servidor
-de mails que trae por defecto solo entrega a los miembros del proyecto.
+**El link no depende del mail.** `generate_link` crea la cuenta y devuelve el
+link sin mandar nada: quien da el alta lo recibe y lo hace llegar por el canal
+que quiera. El servidor de mails que trae Supabase manda muy pocos y solo a los
+miembros del proyecto; para que el mail salga solo hace falta un SMTP propio
+(Authentication → Emails → SMTP Settings) y un aviso del hub que lo use.
+
+Si el email ya tenía cuenta (por ejemplo, alguien dado de baja que vuelve), el
+link es de recuperación: sirve igual para entrar y elegir una contraseña nueva.
 """
 
 import json
@@ -23,8 +28,18 @@ import ssl
 import urllib.error
 import urllib.request
 import uuid
+from typing import NamedTuple
 
 from ..errores import ErrorDeployCenter
+
+
+class Alta(NamedTuple):
+    """Lo que devuelve el proveedor al dar de alta: el id, el link para entrar
+    (None si el proveedor no tiene links) y si la cuenta es nueva o ya existía."""
+
+    usuario_id: str
+    link: str | None
+    nueva: bool
 
 
 class ErrorProveedor(ErrorDeployCenter):
@@ -38,10 +53,6 @@ class ErrorProveedor(ErrorDeployCenter):
     def es_del_pedido(self):
         """4xx (salvo 429): el problema es el dato, no el proveedor."""
         return self.estado is not None and 400 <= self.estado < 500 and self.estado != 429
-
-
-class EmailYaRegistrado(ErrorProveedor):
-    pass
 
 
 def transporte_urllib():
@@ -104,23 +115,30 @@ class ProveedorSupabase:
              "Content-Type": "application/json", "Accept": "application/json"},
             self.timeout)
 
-    def invitar(self, email, nombre=None):
-        """Crea la cuenta y manda la invitación. Devuelve el id (uuid)."""
-        cuerpo = {"email": email, "data": {"nombre": nombre} if nombre else {}}
-        if self.redirigir_a:
-            cuerpo["redirect_to"] = self.redirigir_a
-        estado, datos = self._pedir("POST", "/invite", cuerpo)
-        if estado in (409, 422) and _dice_registrado(datos):
-            raise EmailYaRegistrado(email)
-        if not 200 <= estado < 300:
-            raise ErrorProveedor(f"el proveedor de identidad respondió {estado}: "
-                                 f"{_mensaje(datos)}", estado)
-        usuario_id = (datos or {}).get("id") if isinstance(datos, dict) else None
-        try:
-            return str(uuid.UUID(str(usuario_id)))
-        except ValueError:
-            raise ErrorProveedor("el proveedor de identidad no devolvió el id del usuario") \
-                from None
+    def _link(self, tipo, email, redirigir_a, datos=None):
+        cuerpo = {"type": tipo, "email": email}
+        if redirigir_a or self.redirigir_a:
+            cuerpo["redirect_to"] = redirigir_a or self.redirigir_a
+        if datos:
+            cuerpo["data"] = datos
+        return self._pedir("POST", "/admin/generate_link", cuerpo)
+
+    def invitar(self, email, nombre=None, redirigir_a=None):
+        """Crea la cuenta si no existe y devuelve el link para entrar (`Alta`).
+
+        Si el email ya tenía cuenta, el link es de recuperación y `nueva` es
+        False: quien la llamó no tiene que borrarla si después algo falla."""
+        estado, datos = self._link("invite", email, redirigir_a,
+                                   {"nombre": nombre} if nombre else None)
+        if estado in (400, 409, 422) and _dice_registrado(datos):
+            usuario_id, link = self.link_de_acceso(email, redirigir_a)
+            return Alta(usuario_id, link, False)
+        return Alta(*_usuario_y_link(estado, datos), True)
+
+    def link_de_acceso(self, email, redirigir_a=None):
+        """(id, link) para que alguien que ya tiene cuenta entre y elija una
+        contraseña nueva: la perdió, o no llegó a usar la invitación."""
+        return _usuario_y_link(*self._link("recovery", email, redirigir_a))
 
     def borrar(self, usuario_id):
         estado, datos = self._pedir("DELETE", f"/admin/users/{usuario_id}")
@@ -137,15 +155,38 @@ class ProveedorLocal:
     def __init__(self):
         self.emails = {}
 
-    def invitar(self, email, nombre=None):
+    def invitar(self, email, nombre=None, redirigir_a=None):
         if email in self.emails:
-            raise EmailYaRegistrado(email)
+            return Alta(self.emails[email], None, False)
         usuario_id = str(uuid.uuid4())
         self.emails[email] = usuario_id
-        return usuario_id
+        return Alta(usuario_id, None, True)
+
+    def link_de_acceso(self, email, redirigir_a=None):
+        if email not in self.emails:
+            raise ErrorProveedor(f"{email} no tiene cuenta", 404)
+        return self.emails[email], None
 
     def borrar(self, usuario_id):
         self.emails = {e: u for e, u in self.emails.items() if u != usuario_id}
+
+
+def _usuario_y_link(estado, datos):
+    if not 200 <= estado < 300:
+        raise ErrorProveedor(f"el proveedor de identidad respondió {estado}: "
+                             f"{_mensaje(datos)}", estado)
+    datos = datos if isinstance(datos, dict) else {}
+    # según la versión de Supabase, el usuario viene en la raíz o en "user"
+    usuario = datos.get("user") if isinstance(datos.get("user"), dict) else datos
+    link = datos.get("action_link") or (datos.get("properties") or {}).get("action_link")
+    try:
+        usuario_id = str(uuid.UUID(str(usuario.get("id"))))
+    except ValueError:
+        raise ErrorProveedor("el proveedor de identidad no devolvió el id del usuario") \
+            from None
+    if not link:
+        raise ErrorProveedor("el proveedor de identidad no devolvió el link")
+    return usuario_id, link
 
 
 def _mensaje(datos):

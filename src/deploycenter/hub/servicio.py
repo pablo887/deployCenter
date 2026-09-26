@@ -733,22 +733,26 @@ class Hub:
             return self._guardar_rol(s, perfil, usuario_id, rol, tenant_id, nombre, email,
                                      "usuario_rol")
 
-    def crear_usuario(self, email, rol, tenant_id=None, nombre=None, perfil=None):
+    def crear_usuario(self, email, rol, tenant_id=None, nombre=None, perfil=None,
+                      redirigir_a=None):
         """Da de alta a una persona sin conocer su id: el hub crea la cuenta en el
-        proveedor de identidad, que manda la invitación y devuelve el id.
+        proveedor de identidad, que devuelve el id y el link para que entre y elija
+        su contraseña. El link vuelve en la respuesta: no depende del mail.
+
+        Si el email ya tenía cuenta en el proveedor (alguien dado de baja que
+        vuelve), recibe el rol y un link de recuperación.
 
         Los permisos y el cliente se chequean antes de crear la cuenta, para no
-        dejar cuentas huérfanas. Si igual falla después, la cuenta se borra."""
+        dejar cuentas huérfanas. Si igual falla después, la cuenta nueva se borra;
+        una que ya existía no se toca."""
         email = (email or "").strip().lower()
         if "@" not in email or email.startswith("@") or email.endswith("@"):
             raise Rechazado(f"{email!r} no es un email válido")
         self._validar_rol(perfil, rol, tenant_id)
-        if self.proveedor is None:
-            raise NoDisponible("el alta de usuarios no está habilitada: falta configurar el "
-                               "proveedor de identidad (SUPABASE_URL y SUPABASE_SECRET_KEY)")
-        from .proveedor import EmailYaRegistrado, ErrorProveedor
+        self._exigir_proveedor()
+        from .proveedor import ErrorProveedor
 
-        usuario_id = None
+        alta = None
         try:
             with self.sesion(perfil) as s:
                 if rol in m.ROLES_CLIENTE:
@@ -757,23 +761,51 @@ class Hub:
                     if s.scalar(select(tabla.usuario_id).where(tabla.email == email)):
                         raise Conflicto(f"ya hay un usuario con el email {email}")
                 try:
-                    usuario_id = self.proveedor.invitar(email, nombre)
-                except EmailYaRegistrado:
-                    raise Conflicto(
-                        f"{email} ya tiene cuenta en el proveedor de identidad; asignale el "
-                        f"rol con su id") from None
+                    alta = self.proveedor.invitar(email, nombre, redirigir_a=redirigir_a)
                 except ErrorProveedor as e:
                     raise (Rechazado if e.es_del_pedido else NoDisponible)(str(e)) from None
-                datos = self._guardar_rol(s, perfil, usuario_id, rol, tenant_id, nombre,
+                datos = self._guardar_rol(s, perfil, alta.usuario_id, rol, tenant_id, nombre,
                                           email, "usuario_alta")
         except Exception:
-            if usuario_id is not None:
+            if alta is not None and alta.nueva:
                 try:
-                    self.proveedor.borrar(usuario_id)
+                    self.proveedor.borrar(alta.usuario_id)
                 except ErrorProveedor:  # pragma: no cover - queda en el proveedor, sin rol
                     pass
             raise
-        return {**datos, "invitado": True}
+        return {**datos, "invitado": True, "nueva": alta.nueva, "link": alta.link}
+
+    def link_de_acceso(self, usuario_id, perfil=None, redirigir_a=None):
+        """Un link nuevo para alguien que ya tiene alta: perdió la contraseña o no
+        llegó a usar la invitación. Lo pide quien administra a esa persona."""
+        usuario_id = self._uuid(usuario_id)
+        self._exigir_proveedor()
+        from .proveedor import ErrorProveedor
+
+        with self.sesion(perfil) as s:
+            u = s.get(m.UsuarioTenant, usuario_id)
+            if u is None or not self._ve(perfil, u.tenant_id):
+                raise NoEncontrado(f"no existe el usuario {usuario_id}")
+            if perfil is not None and perfil.usuario_id == usuario_id:
+                raise Prohibido("tu propio acceso lo recuperás con \"¿Olvidaste tu contraseña?\"")
+            self._exigir_admin_usuarios(perfil, u.tenant_id)
+            if not u.email:
+                raise Rechazado("ese usuario no tiene email cargado: sin email no hay link")
+            try:
+                cuenta, link = self.proveedor.link_de_acceso(u.email, redirigir_a=redirigir_a)
+            except ErrorProveedor as e:
+                raise (Rechazado if e.es_del_pedido else NoDisponible)(str(e)) from None
+            if cuenta != usuario_id:
+                # el email del hub apunta a otra cuenta del proveedor: no se entrega
+                raise Conflicto(f"el email {u.email} corresponde a otra cuenta del proveedor "
+                                f"de identidad; corregilo antes de pedir un link")
+            self._auditar(s, perfil, "link_de_acceso", u.tenant_id, usuario=usuario_id)
+            return {"usuario_id": usuario_id, "email": u.email, "link": link}
+
+    def _exigir_proveedor(self):
+        if self.proveedor is None:
+            raise NoDisponible("el alta de usuarios no está habilitada: falta configurar el "
+                               "proveedor de identidad (SUPABASE_URL y SUPABASE_SECRET_KEY)")
 
     def quitar_usuario(self, usuario_id, perfil=None):
         usuario_id = self._uuid(usuario_id)

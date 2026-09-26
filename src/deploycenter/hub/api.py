@@ -293,12 +293,23 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=No
     def usuarios(p: Persona, tenant: str | None = None):
         return hub.usuarios(perfil=p, tenant_id=tenant)
 
+    def _volver_a(request):
+        """Adónde vuelve la persona después de abrir el link: DC_URL_WEB si está
+        configurada; si no, la URL con la que llegó el pedido."""
+        fija = getattr(hub.proveedor, "redirigir_a", None)
+        return (fija or str(request.base_url)).rstrip("/") + "/"
+
     @app.post("/api/v1/usuarios", status_code=201)
-    def alta_usuario(pedido: PedidoAlta, p: Persona):
-        """Alta sin id: el hub crea la cuenta e invita por mail; el id vuelve en la
-        respuesta."""
+    def alta_usuario(pedido: PedidoAlta, request: Request, p: Persona):
+        """Alta sin id: el hub crea la cuenta y devuelve el id y el link para que la
+        persona entre y elija su contraseña."""
         return hub.crear_usuario(pedido.email, pedido.rol, tenant_id=pedido.tenant,
-                                 nombre=pedido.nombre, perfil=p)
+                                 nombre=pedido.nombre, perfil=p,
+                                 redirigir_a=_volver_a(request))
+
+    @app.post("/api/v1/usuarios/{usuario_id}/acceso")
+    def link_de_acceso(usuario_id: str, request: Request, p: Persona):
+        return hub.link_de_acceso(usuario_id, perfil=p, redirigir_a=_volver_a(request))
 
     @app.put("/api/v1/usuarios/{usuario_id}")
     def asignar_usuario(usuario_id: str, pedido: PedidoUsuario, p: Persona):
@@ -323,7 +334,9 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=No
 
         @app.get("/config.json")
         def config():
-            return config_web or {}
+            # qué alta ofrece la web: sin id (y con link, si el proveedor los da)
+            proveedor = hub.proveedor.nombre if hub.proveedor is not None else None
+            return dict(config_web or {}, proveedor=proveedor)
 
         app.mount("/", StaticFiles(directory=str(web), html=True), name="web")
 
