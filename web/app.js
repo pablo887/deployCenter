@@ -1188,8 +1188,8 @@
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-peligro" data-a="revocar" data-id="${a.id}">Revocar</button>`;
     } else if (m.tipo === 'alta-usuario-id') {
       const fijo = m.tenant ? tenant(m.tenant) : tenant(usuarioActual().tenant);
-      t = `Alta de usuario · ${fijo.nombre}`;
-      c = `<p class="chico suave">La persona tiene que existir en el proveedor de identidad (el registro abierto está cerrado: la crea Accusys). Al ingresar sin alta, la pantalla le muestra su id: pedíselo y cargalo acá.</p>
+      t = `Alta por ID · ${fijo.nombre}`;
+      c = `<p class="chico suave">Solo para alguien que ya tiene cuenta en el proveedor de identidad. Al ingresar sin alta, la pantalla le muestra su id: pedíselo y cargalo acá. Para una persona nueva usá el alta por email, que crea la cuenta y devuelve el id.</p>
         <div class="campo"><label for="alta-id">Id del usuario</label><input type="text" id="alta-id" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off"></div>
         <div class="campo"><label for="alta-mail">Email</label><input type="email" id="alta-mail" autocomplete="off"></div>
         <div class="campo"><label for="alta-nombre">Nombre</label><input type="text" id="alta-nombre" autocomplete="off"></div>
@@ -1206,13 +1206,15 @@
         <div class="campo"><label for="inv-rol">Rol</label><select id="inv-rol"><option value="lector">Lector</option><option value="operador" selected>Operador</option><option value="aprobador">Aprobador</option></select></div>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="enviar-invitacion">Enviar invitación</button>`;
     } else if (m.tipo === 'alta-usuario') {
-      const pre = UI.filtroUsu || (S.tenants[0] || {}).id;
-      t = 'Dar de alta usuario';
+      // con m.tenant el cliente viene fijo (pantalla del Aprobador o parametría de un cliente)
+      const pre = m.tenant || UI.filtroUsu || (S.tenants[0] || {}).id;
+      t = m.tenant ? `Dar de alta usuario · ${tenant(m.tenant).nombre}` : 'Dar de alta usuario';
       c = `<div class="campo"><label for="alta-mail">Email</label><input type="email" id="alta-mail" placeholder="nombre@cliente.example"></div>
         <div class="campo"><label for="alta-nombre">Nombre</label><input id="alta-nombre" placeholder="Nombre y apellido"></div>
-        <div class="campo"><label for="alta-t">Cliente</label><select id="alta-t">${S.tenants.map(x => `<option value="${x.id}" ${x.id === pre ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select></div>
+        ${m.tenant ? `<input type="hidden" id="alta-t" value="${esc(m.tenant)}">` : `<div class="campo"><label for="alta-t">Cliente</label><select id="alta-t">${S.tenants.map(x => `<option value="${x.id}" ${x.id === pre ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select></div>`}
         <div class="campo"><label for="alta-rol">Rol</label><select id="alta-rol"><option value="lector">Lector</option><option value="operador" selected>Operador</option><option value="aprobador">Aprobador</option></select></div>
-        <p class="suave chico">El ID no se carga: la cuenta se crea en el proveedor de identidad, que manda la invitación y devuelve el ID. La persona elige su contraseña y enrola el segundo factor.</p>`;
+        <p class="suave chico">El ID no se carga: la cuenta se crea en el proveedor de identidad, que manda la invitación y devuelve el ID. La persona elige su contraseña y enrola el segundo factor.</p>
+        ${MODO === 'hub' ? `<p class="suave chico">¿Ya tiene cuenta? <a href="#" data-a="alta-por-id" data-t="${esc(pre)}">Cargala por ID</a>.</p>` : ''}`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="crear-usuario">Crear e invitar</button>`;
     } else if (m.tipo === 'usuario-creado') {
       const x = S.usuarios.find(y => y.id === m.id);
@@ -1483,8 +1485,9 @@
       UI.drawer = { tipo: 'log', id: d.id, orden: null }; render();
       try { const o = await HUB.api('GET', `/ordenes/${encodeURIComponent(d.id)}`); if (UI.drawer && UI.drawer.id === d.id) { UI.drawer.orden = o; render(); } } catch (e) { toast(e.message, true); }
     },
-    'invitar': () => { UI.modal = { tipo: 'alta-usuario-id' }; render(); },
-    'alta-usuario-tenant': () => { UI.modal = { tipo: 'alta-usuario-id', tenant: UI.tenantParam }; render(); },
+    'invitar': () => { UI.modal = { tipo: 'alta-usuario', tenant: usuarioActual().tenant }; render(); },
+    'alta-usuario-tenant': () => { UI.modal = { tipo: 'alta-usuario', tenant: UI.tenantParam }; render(); },
+    'alta-por-id': (d, el, e) => { if (e) e.preventDefault(); UI.modal = { tipo: 'alta-usuario-id', tenant: d.t }; render(); },
     // Usuarios de clientes (Accusys): alta sin id, el hub crea la cuenta e invita
     'crear-usuario': () => {
       const cuerpo = { email: $('#alta-mail').value.trim(), nombre: $('#alta-nombre').value.trim() || null, tenant: $('#alta-t').value, rol: $('#alta-rol').value };
