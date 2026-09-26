@@ -17,15 +17,48 @@ from ..errores import ErrorArchivo
 
 
 class Catalogo:
-    def __init__(self, raiz):
+    """`raiz` es el repo (con `productos/`). `extras` son otras raíces con la misma
+    forma, que se suman: sirven para un catálogo de demostración que no tiene por
+    qué vivir en el real. Si un producto está en dos, gana la raíz principal."""
+
+    def __init__(self, raiz, extras=()):
         self.raiz = Path(raiz)
+        self.raices = [self.raiz, *(Path(e) for e in extras)]
+
+    def _raiz_de(self, producto):
+        for raiz in self.raices:
+            if (raiz / "productos" / producto / "producto.yaml").is_file():
+                return raiz
+        return self.raiz
 
     def _dir_producto(self, producto):
         # el código de producto viene de la base o de una petición: no se deja
         # que arme una ruta fuera de productos/
         if not producto or "/" in producto or "\\" in producto or producto.startswith("."):
             raise ErrorArchivo(f"código de producto inválido: {producto!r}")
-        return self.raiz / "productos" / producto
+        return self._raiz_de(producto) / "productos" / producto
+
+    def productos(self):
+        """Los códigos de producto con `producto.yaml`, en orden."""
+        return sorted({d.name for raiz in self.raices if (raiz / "productos").is_dir()
+                       for d in (raiz / "productos").iterdir()
+                       if (d / "producto.yaml").is_file() and not d.name.startswith(".")})
+
+    def novedades(self, producto, version):
+        """Los ítems del changelog (las líneas de lista), para mostrar en la web."""
+        manifiesto = self.release(producto, version)
+        raiz = self._raiz_de(producto)
+        ruta = raiz / (manifiesto or {}).get("changelog", "")
+        if not manifiesto or not ruta.is_file() or not ruta.resolve().is_relative_to(
+                raiz.resolve()):
+            return []
+        items = []
+        for linea in ruta.read_text(encoding="utf-8").splitlines():
+            if linea.startswith(("- ", "* ")):
+                items.append(linea[2:].strip())
+            elif items and linea.startswith("  ") and linea.strip():
+                items[-1] += " " + linea.strip()
+        return items
 
     def datos_producto(self, producto):
         ruta = self._dir_producto(producto) / "producto.yaml"
@@ -65,7 +98,7 @@ class Catalogo:
         plantilla = self._dir_producto(producto) / self.datos_producto(producto).get(
             "plantilla", "compose.plantilla.yaml")
         firma = carpeta / "manifiesto.json.sig"
-        changelog = self.raiz / manifiesto.get("changelog", "")
+        changelog = self._raiz_de(producto) / manifiesto.get("changelog", "")
 
         return {
             "manifiesto": manifiesto,
