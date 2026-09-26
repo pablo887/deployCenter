@@ -30,9 +30,14 @@ from . import servicio as srv
 ESPERA_MAXIMA_S = 30
 
 
-def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=None):
+def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=None,
+              admin=None, url_publica=None):
     """`web` es la carpeta del frontend (o None para no servirlo) y `config_web`
-    lo que se publica en /config.json: nada secreto, lo lee cualquiera."""
+    lo que se publica en /config.json: nada secreto, lo lee cualquiera.
+
+    `admin` es la API de administración del proveedor de identidad (invitaciones);
+    sin ella, las altas son por id. `url_publica` es adónde vuelve la persona
+    después de abrir el link; por defecto, la URL con la que llegó el pedido."""
     try:
         from fastapi import Depends, FastAPI, Header, Query, Request, Response
         from fastapi.concurrency import run_in_threadpool
@@ -102,6 +107,12 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=No
     class PedidoHabilitacion(BaseModel):
         horas: int = Field(ge=1, le=srv.MAX_HORAS_HABILITACION)
         motivo: str | None = Field(default=None, max_length=500)
+
+    class PedidoInvitacion(BaseModel):
+        email: str = Field(min_length=3, max_length=320)
+        rol: str = Field(max_length=20)
+        tenant: str | None = Field(default=None, max_length=40)
+        nombre: str | None = Field(default=None, max_length=200)
 
     class PedidoUsuario(BaseModel):
         rol: str = Field(max_length=20)
@@ -292,6 +303,18 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=No
         return hub.asignar_usuario(usuario_id, pedido.rol, tenant_id=pedido.tenant,
                                    nombre=pedido.nombre, email=pedido.email, perfil=p)
 
+    def _volver_a(request):
+        return (url_publica or str(request.base_url)).rstrip("/") + "/"
+
+    @app.post("/api/v1/invitaciones", status_code=201)
+    def invitar(pedido: PedidoInvitacion, request: Request, p: Persona):
+        return hub.invitar(admin, pedido.email, pedido.rol, _volver_a(request),
+                           tenant_id=pedido.tenant, nombre=pedido.nombre, perfil=p)
+
+    @app.post("/api/v1/usuarios/{usuario_id}/acceso")
+    def link_de_acceso(usuario_id: str, request: Request, p: Persona):
+        return hub.link_de_acceso(admin, usuario_id, _volver_a(request), perfil=p)
+
     @app.delete("/api/v1/usuarios/{usuario_id}")
     def quitar_usuario(usuario_id: str, p: Persona):
         hub.quitar_usuario(usuario_id, perfil=p)
@@ -310,7 +333,7 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=No
 
         @app.get("/config.json")
         def config():
-            return config_web or {}
+            return dict(config_web or {}, invitaciones=admin is not None)
 
         app.mount("/", StaticFiles(directory=str(web), html=True), name="web")
 

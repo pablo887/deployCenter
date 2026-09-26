@@ -404,6 +404,11 @@ docker compose exec hub dc-hub usuario <uuid> --rol comercial --email vos@accusy
 Desde ahí, Comercial crea los clientes, sus productos y sus usuarios desde la
 web; Soporte emite los códigos para enrolar agentes.
 
+Para invitar por email desde la web, agregá `SUPABASE_SECRET_KEY` al `.env` y la
+URL del hub a las *Redirect URLs* del proyecto de Supabase (ver `.env.ejemplo`).
+Quien invita recibe el link y lo manda por el canal que quiera: Supabase sin
+SMTP propio casi no manda mails.
+
 Para ver un despliegue real sin salir de tu máquina, el perfil `agente-demo`
 suma un agente y un producto de prueba (nginx, con un release roto a propósito
 para ver la vuelta atrás): pasos en
@@ -501,8 +506,10 @@ que no pasa por ahí no llega a main.
 - [x] Registro abierto cerrado en `deploycenter-dev`: las altas van solo por
       la secret key (o las invitaciones, cuando estén)
 - [ ] Dominio propio para Auth (`auth.accusys.com.ar`)
-- [ ] Invitaciones: hoy el usuario se crea en el proveedor y se le asigna el rol
-      con `dc-hub usuario` o la API; falta que el hub mande la invitación
+- [x] Invitaciones: Aprobador y Comercial invitan por email; el hub crea a la
+      persona en Supabase y devuelve el link para elegir contraseña (sin depender
+      del mail). También link de acceso para quien lo perdió, "olvidé mi
+      contraseña" y cambio de contraseña desde la web
 - [ ] Variables nuevas desde la web: el formulario tiene que escribir en el
       `.env` del servidor sin que el valor pase por el hub
 - [ ] Órdenes entregadas sin respuesta: si el agente muere después de tomar

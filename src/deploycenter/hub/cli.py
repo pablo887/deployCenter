@@ -74,12 +74,18 @@ def cmd_servir(args):
     if not hub.es_sqlite and (faltan := migraciones.pendientes(hub.engine, _dir_migraciones(args))):
         print(f"{amarillo}{s['aviso']}{fin} hay {len(faltan)} migración(es) sin aplicar: "
               f"corré 'dc-hub migrar'")
+    from .invitaciones import AdminSupabase
+
     web = None if args.sin_web else _dir_web(args)
+    admin = AdminSupabase.desde_entorno() if validador and not validador.secreto else None
     app = crear_app(hub, validador=validador, web=web,
-                    config_web=config_web(validador) if web else None)
+                    config_web=config_web(validador) if web else None,
+                    admin=admin, url_publica=os.environ.get("DC_HUB_URL_PUBLICA"))
     print(f"{verde}{s['ok']}{fin} hub en http://{args.host}:{args.puerto}/")
     if web:
         print(f"  {gris}web desde {web}{fin}")
+    if validador and not validador.secreto and admin is None:
+        print(f"  {gris}invitaciones apagadas: falta SUPABASE_SECRET_KEY (altas por id){fin}")
     from sqlalchemy.engine import make_url
 
     base = make_url(args.db).render_as_string(hide_password=True)
