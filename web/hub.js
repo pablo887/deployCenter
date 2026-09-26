@@ -14,6 +14,7 @@
 
   const CLAVE_SESION = 'deploycenter-sesion';
   let CFG = null;
+  let LINK = null;   // lo que trajo un link de invitación o de recuperación
   let sesion = leerSesion();
   let temporizador = null;
 
@@ -39,6 +40,10 @@
     email_not_confirmed: 'El email todavía no está confirmado.',
     user_banned: 'El usuario está bloqueado.',
     over_request_rate_limit: 'Demasiados intentos: esperá un momento y probá de nuevo.',
+    over_email_send_rate_limit: 'Se mandaron demasiados mails en poco tiempo: esperá un rato o pedile un link a quien te dio de alta.',
+    weak_password: 'La contraseña es muy débil: usá una más larga.',
+    same_password: 'La contraseña nueva tiene que ser distinta de la anterior.',
+    insufficient_aal: 'Primero verificá el segundo factor.',
     mfa_verification_failed: 'El código no es válido o ya venció: probá con el que muestra ahora la app.',
     mfa_challenge_expired: 'El desafío venció: volvé a ingresar el código.',
     mfa_ip_address_mismatch: 'Cambió la red entre el desafío y la verificación: volvé a ingresar el código.',
@@ -72,8 +77,28 @@
       if (!r.ok) return null;
       CFG = await r.json();
     } catch (e) { return null; }
+    tomarLink();
     programarRenovacion();
     return CFG;
+  }
+
+  // Un link de invitación o de recuperación vuelve de Supabase con la sesión en el
+  // fragmento (#access_token=…&type=invite). Se toma y se borra de la barra de
+  // direcciones, para que no quede en el historial ni en una captura.
+  function tomarLink() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (!h.get('access_token') && !h.get('error') && !h.get('error_code')) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    if (h.get('access_token')) {
+      guardarSesion({
+        access_token: h.get('access_token'), refresh_token: h.get('refresh_token'),
+        expires_at: +h.get('expires_at') || Math.floor(Date.now() / 1000) + (+h.get('expires_in') || 3600)
+      });
+      LINK = { tipo: h.get('type') || 'invite' };
+    } else {
+      const vencido = h.get('error_code') === 'otp_expired';
+      LINK = { error: vencido ? 'El link venció o ya se usó.' : (h.get('error_description') || 'El link no es válido.').replace(/\+/g, ' ') };
+    }
   }
 
   // ------------------------------------------------------------------ Supabase Auth
@@ -113,6 +138,18 @@
     const m = /^data:image\/svg\+xml;(?:utf-8|charset=utf-8),(.*)$/s.exec(qr);
     const svg = m ? m[1] : qr.trimStart().startsWith('<') ? qr : null;
     return svg ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg) : qr;
+  }
+
+  // La contraseña se cambia con la sesión abierta. Si la persona ya tiene segundo
+  // factor, Supabase exige aal2: primero el código, después la contraseña.
+  async function definirClave(clave) {
+    await auth('PUT', '/user', { password: clave }, sesion.access_token);
+    LINK = null;
+  }
+
+  async function olvideClave(email) {
+    const volver = encodeURIComponent(location.origin + location.pathname);
+    await auth('POST', `/recover?redirect_to=${volver}`, { email });
   }
 
   async function verificar(factorId, codigo) {
@@ -309,6 +346,7 @@
 
   window.DC_HUB = {
     iniciar, config: () => CFG, ingresar, estadoMfa, verificar, usarToken, salir, renovar,
+    linkPendiente: () => LINK, definirClave, olvideClave, aal,
     haySesion, usuario, api, cargar, fechaLocal, haceCuanto, ErrorHub
   };
 })();

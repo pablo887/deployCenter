@@ -665,24 +665,7 @@ class Hub:
             usuario_id = str(uuid.UUID(str(usuario_id)))
         except ValueError:
             raise Rechazado(f"{usuario_id!r} no es un id de usuario válido") from None
-        if rol in m.ROLES_ACCUSYS:
-            if perfil is not None:
-                raise Prohibido("los usuarios de Accusys se dan de alta desde la consola")
-            if tenant_id:
-                raise Rechazado("un usuario de Accusys no pertenece a un cliente")
-        elif rol in m.ROLES_CLIENTE:
-            if not tenant_id:
-                raise Rechazado("un usuario de cliente necesita el cliente")
-            if perfil is not None:
-                if perfil.rol == "aprobador":
-                    if perfil.tenant != tenant_id:
-                        raise Prohibido("solo administrás usuarios de tu organización")
-                    if perfil.usuario_id == usuario_id:
-                        raise Prohibido("no podés cambiar tu propio rol")
-                elif perfil.rol != "comercial":
-                    raise Prohibido(f"tu rol ({perfil.rol}) no administra usuarios")
-        else:
-            raise Rechazado(f"rol desconocido: {rol!r}")
+        self._validar_asignacion(rol, tenant_id, perfil, usuario_id)
 
         with self.sesion(perfil) as s:
             if rol in m.ROLES_ACCUSYS:
@@ -704,6 +687,76 @@ class Hub:
             self._auditar(s, perfil, "usuario_rol", tenant_id, usuario=usuario_id, rol=rol)
         return {"usuario_id": usuario_id, "rol": rol, "tenant": tenant_id,
                 "nombre": nombre, "email": email}
+
+    @staticmethod
+    def _validar_asignacion(rol, tenant_id, perfil, usuario_id=None):
+        """Quién puede dar qué rol. Se chequea antes de tocar nada, también antes de
+        crear a alguien en el proveedor de identidad."""
+        if rol in m.ROLES_ACCUSYS:
+            if perfil is not None:
+                raise Prohibido("los usuarios de Accusys se dan de alta desde la consola")
+            if tenant_id:
+                raise Rechazado("un usuario de Accusys no pertenece a un cliente")
+        elif rol in m.ROLES_CLIENTE:
+            if not tenant_id:
+                raise Rechazado("un usuario de cliente necesita el cliente")
+            if perfil is not None:
+                if perfil.rol == "aprobador":
+                    if perfil.tenant != tenant_id:
+                        raise Prohibido("solo administrás usuarios de tu organización")
+                    if usuario_id and perfil.usuario_id == usuario_id:
+                        raise Prohibido("no podés cambiar tu propio rol")
+                elif perfil.rol != "comercial":
+                    raise Prohibido(f"tu rol ({perfil.rol}) no administra usuarios")
+        else:
+            raise Rechazado(f"rol desconocido: {rol!r}")
+
+    # ------------------------------------------------------------------ #
+    # invitaciones (necesitan la API de administración del proveedor)
+    # ------------------------------------------------------------------ #
+
+    def invitar(self, admin, email, rol, redirigir_a, tenant_id=None, nombre=None,
+                perfil=None):
+        """Crea a la persona en el proveedor de identidad (si no existía), le da el
+        rol y devuelve el link para que entre y elija su contraseña."""
+        if admin is None:
+            raise Rechazado("las invitaciones necesitan SUPABASE_SECRET_KEY en el hub; "
+                            "mientras tanto, alta por id")
+        self._validar_asignacion(rol, tenant_id, perfil)
+        if tenant_id:
+            with self.sesion(perfil) as s:
+                self._tenant(s, tenant_id)
+        try:
+            usuario_id, link, nueva = admin.invitar(email, redirigir_a, nombre=nombre)
+        except ErrorDeployCenter as e:
+            raise Rechazado(str(e)) from e
+        datos = self.asignar_usuario(usuario_id, rol, tenant_id=tenant_id, nombre=nombre,
+                                     email=email.strip().lower(), perfil=perfil)
+        with self.sesion(perfil) as s:
+            self._auditar(s, perfil, "invitacion", tenant_id, usuario=usuario_id,
+                          email=datos["email"], rol=rol, nueva=nueva)
+        return dict(datos, link=link, nueva=nueva)
+
+    def link_de_acceso(self, admin, usuario_id, redirigir_a, perfil=None):
+        """Un link nuevo para alguien que ya tiene alta: perdió la contraseña o no
+        llegó a usar la invitación. Lo pide quien administra a esa persona."""
+        if admin is None:
+            raise Rechazado("los links de acceso necesitan SUPABASE_SECRET_KEY en el hub")
+        with self.sesion(perfil) as s:
+            u = s.get(m.UsuarioTenant, str(usuario_id))
+            if u is None or not self._ve(perfil, u.tenant_id):
+                raise NoEncontrado(f"no existe el usuario {usuario_id}")
+            tenant_id, email = u.tenant_id, u.email
+        self._validar_asignacion("lector", tenant_id, perfil, str(usuario_id))
+        if not email:
+            raise Rechazado("ese usuario no tiene email cargado: sin email no hay link")
+        try:
+            _id, link = admin.link_de_acceso(email, redirigir_a)
+        except ErrorDeployCenter as e:
+            raise Rechazado(str(e)) from e
+        with self.sesion(perfil) as s:
+            self._auditar(s, perfil, "link_de_acceso", tenant_id, usuario=str(usuario_id))
+        return {"usuario_id": str(usuario_id), "email": email, "link": link}
 
     def quitar_usuario(self, usuario_id, perfil=None):
         try:
