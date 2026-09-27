@@ -134,6 +134,20 @@ button,input,select,textarea{font:inherit;color:inherit}
 .usuario .quien{display:flex;flex-direction:column;line-height:1.15;text-align:left}
 .usuario .quien b{font-size:.84rem;font-weight:600}
 .usuario .quien small{font-size:.7rem;color:var(--gris)}
+.perfil{position:relative}
+.perfil-pop{position:absolute;top:calc(100% + 8px);right:0;width:min(340px,calc(100vw - 32px));z-index:30;background:var(--surface);
+  border:1px solid var(--linea);border-radius:12px;box-shadow:var(--sombra-alta);padding:14px;display:flex;flex-direction:column;gap:12px;animation:baja .12s ease}
+.perfil-pop::before{content:"";position:absolute;top:-6px;right:18px;width:10px;height:10px;background:var(--surface);
+  border-left:1px solid var(--linea);border-top:1px solid var(--linea);transform:rotate(45deg)}
+.perfil-cab{display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--linea)}
+.perfil-cab .avatar{width:38px;height:38px;font-size:.8rem}
+.perfil-quien{display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.perfil-quien b{font-size:.92rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perfil-quien small{font-size:.78rem;color:var(--gris);overflow-wrap:anywhere}
+.perfil-pop .datos{font-size:.8rem}
+.perfil-lista{gap:6px;max-height:50vh;overflow:auto}
+.perfil-pie{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--linea)}
+@keyframes baja{from{transform:translateY(-4px);opacity:0}}
 
 .contenido{padding:28px 28px 80px;max-width:1640px;width:100%;display:flex;flex-direction:column;gap:22px}
 .cabecera{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
