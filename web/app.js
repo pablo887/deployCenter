@@ -284,7 +284,7 @@
           <dt>2º factor</dt><dd><span class="pill p-ok">aal2 · TOTP verificado</span></dd>
           <dt>Id</dt><dd><code>${esc(u.id)}</code></dd>
         </dl>
-        <div class="perfil-pie"><button class="btn btn-sec btn-chico" data-a="logout">${I.logout} Cerrar sesión</button></div>
+        <div class="perfil-pie"><button class="btn btn-sec btn-chico" data-a="logout">${I.logout} Cerrar sesión</button>${(HUB.config() || {}).identidad === 'supabase' ? '<button class="btn btn-fantasma btn-chico" data-a="cambiar-clave">Cambiar contraseña</button>' : ''}</div>
       </div>`;
     }
     return `<div class="perfil-pop" role="dialog" aria-label="Cambiar de usuario">
@@ -555,11 +555,11 @@
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Usuarios y roles</span><h1>Quién puede hacer qué en ${esc(t.nombre)}</h1>
       <p>El despliegue lo opera tu organización. Los roles aplican solo dentro de tu tenant.</p></div>
-      <button class="btn btn-pri" data-a="invitar" ${admin ? '' : 'disabled title="Solo un Aprobador administra usuarios"'}>${I.plus} ${MODO === 'hub' ? 'Dar de alta' : 'Invitar usuario'}</button></div>
+      <button class="btn btn-pri" data-a="invitar" ${admin ? '' : 'disabled title="Solo un Aprobador administra usuarios"'}>${I.plus} ${MODO === 'hub' && !altaSinId() ? 'Dar de alta' : 'Invitar usuario'}</button></div>
       <section class="panel"><div class="tabla-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th>Segundo factor</th><th></th></tr></thead><tbody>
         ${us.map(x => `<tr><td><b>${esc(x.nombre)}</b><span class="sub">${esc(x.email)}</span></td>
           <td>${admin && x.id !== u.id ? `<select data-f="rol-usuario" data-id="${x.id}" aria-label="Rol de ${esc(x.nombre)}">${['lector', 'operador', 'aprobador'].map(r => `<option value="${r}" ${x.rol === r ? 'selected' : ''}>${ROLES[r].nombre}</option>`).join('')}</select>` : `<span class="pill p-info sin-punto">${ROLES[x.rol].nombre}</span>`}</td>
-          <td><span class="pill p-ok">${MODO === 'hub' ? 'TOTP obligatorio' : 'TOTP activo'}</span></td><td class="suave chico">${x.id === u.id ? 'Sos vos' : ''}</td></tr>`).join('')}
+          <td><span class="pill p-ok">${MODO === 'hub' ? 'TOTP obligatorio' : 'TOTP activo'}</span></td><td class="suave chico">${x.id === u.id ? 'Sos vos' : MODO === 'hub' && admin && conLinks() && x.email ? `<button class="btn btn-fantasma btn-chico" data-a="link-acceso" data-id="${esc(x.id)}">Link de acceso</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div></section>
       <div class="grid g3">
         <div class="panel panel-cuerpo pila"><h3>Lector</h3><p class="suave chico">Ve catálogo, estado, historial y changelog. No ejecuta nada.</p></div>
@@ -979,10 +979,11 @@
     const us = S.usuarios.filter(x => x.tenant === t.id);
     const usuarios = `<section class="panel">
         <div class="panel-cab"><div><h2>Usuarios</h2><p>${us.length ? `${us.length} con acceso a ${esc(t.nombre)}` : 'Nadie tiene acceso todavía'}</p></div>
-          ${hub && edita ? `<button class="btn btn-sec btn-chico" data-a="alta-usuario-tenant">${I.plus} Alta de usuario</button>` : ''}</div>
-        ${us.length ? `<div class="tabla-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th></tr></thead><tbody>${us.map(x => `<tr>
+          ${hub && edita ? `<button class="btn btn-sec btn-chico" data-a="alta-usuario-tenant">${I.plus} ${altaSinId() ? 'Invitar' : 'Alta de usuario'}</button>` : ''}</div>
+        ${us.length ? `<div class="tabla-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th></th></tr></thead><tbody>${us.map(x => `<tr>
           <td><b>${esc(x.nombre)}</b><span class="sub">${esc(x.email)}</span></td>
-          <td>${hub && edita ? `<select data-f="rol-usuario" data-id="${x.id}" aria-label="Rol de ${esc(x.nombre)}" style="width:auto">${['lector', 'operador', 'aprobador'].map(r => `<option value="${r}" ${x.rol === r ? 'selected' : ''}>${ROLES[r].nombre}</option>`).join('')}</select>` : `<span class="pill p-info sin-punto">${ROLES[x.rol].nombre}</span>`}</td></tr>`).join('')}</tbody></table></div>`
+          <td>${hub && edita ? `<select data-f="rol-usuario" data-id="${x.id}" aria-label="Rol de ${esc(x.nombre)}" style="width:auto">${['lector', 'operador', 'aprobador'].map(r => `<option value="${r}" ${x.rol === r ? 'selected' : ''}>${ROLES[r].nombre}</option>`).join('')}</select>` : `<span class="pill p-info sin-punto">${ROLES[x.rol].nombre}</span>`}</td>
+          <td style="text-align:right">${hub && edita && conLinks() && x.email ? `<button class="btn btn-fantasma btn-chico" data-a="link-acceso" data-id="${esc(x.id)}">Link de acceso</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`
           : `<div class="vacio">Dale de alta al Aprobador del cliente: después él administra al resto.</div>`}
       </section>`;
 
@@ -1073,7 +1074,7 @@
       .sort((a, b) => a.tenant.localeCompare(b.tenant) || a.nombre.localeCompare(b.nombre));
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Usuarios de clientes</span><h1>Alta y roles de la gente de cada cliente</h1>
-      <p>Comercial y Publicador dan de alta usuarios en cualquier cliente; el Aprobador de cada organización administra los suyos. No hace falta conocer el ID: se crea la cuenta, se manda la invitación y el ID vuelve con el usuario creado.</p></div>
+      <p>Comercial y Publicador dan de alta usuarios en cualquier cliente; el Aprobador de cada organización administra los suyos. No hace falta conocer el ID: se crea la cuenta, la persona recibe un link para elegir su contraseña y el ID vuelve con el usuario creado.</p></div>
       <div class="fila">
         <select data-f="usu-t" aria-label="Filtrar por cliente" style="width:auto"><option value="">Todos los clientes</option>${S.tenants.map(t => `<option value="${t.id}" ${f === t.id ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select>
         <button class="btn btn-pri" data-a="alta-usuario" ${admin ? '' : 'disabled title="Dan de alta usuarios Comercial y Publicador"'}>${I.plus} Dar de alta usuario</button>
@@ -1083,7 +1084,7 @@
           <td>${esc(tenant(x.tenant).nombre)}</td>
           <td>${admin ? `<select data-f="rol-usuario" data-id="${x.id}" aria-label="Rol de ${esc(x.nombre)}">${['lector', 'operador', 'aprobador'].map(r => `<option value="${r}" ${x.rol === r ? 'selected' : ''}>${ROLES[r].nombre}</option>`).join('')}</select>` : `<span class="pill p-info sin-punto">${ROLES[x.rol].nombre}</span>`}</td>
           <td><code class="chico">${esc(x.id)}</code></td>
-          <td>${admin ? `<button class="btn btn-fantasma btn-chico" data-a="baja-usuario" data-id="${x.id}">Dar de baja</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="vacio">Ese cliente todavía no tiene usuarios.</td></tr>'}
+          <td style="white-space:nowrap">${admin && conLinks() && x.email ? `<button class="btn btn-fantasma btn-chico" data-a="link-acceso" data-id="${esc(x.id)}">Link de acceso</button>` : ''}${admin ? `<button class="btn btn-fantasma btn-chico" data-a="baja-usuario" data-id="${esc(x.id)}">Dar de baja</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="vacio">Ese cliente todavía no tiene usuarios.</td></tr>'}
       </tbody></table></div></section>
       ${admin ? '' : `<div class="aviso a-info">${I.info}<div>Estás como <b>${ROLES[u.rol].nombre}</b>: los usuarios de clientes los dan de alta Comercial y Publicador.${MODO === 'hub' ? '' : ' Cambiá de usuario arriba a la derecha para probarlo.'}</div></div>`}`;
   }
@@ -1198,6 +1199,27 @@
       t = 'Revocar agente';
       c = `<p>Se revocan el token de <code>${esc(a.host)}</code> y su credencial del registry. El servidor no se toca; los stacks siguen corriendo como están.</p>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-peligro" data-a="revocar" data-id="${a.id}">Revocar</button>`;
+    } else if (m.tipo === 'invitar-hub') {
+      const fijo = m.tenant ? tenant(m.tenant) : tenant(usuarioActual().tenant);
+      t = `Alta de usuario · ${fijo.nombre}`;
+      c = `<p class="chico suave">Se crea el usuario (si no existía) y te damos un link para que elija su contraseña y active el segundo factor. Mandáselo por un canal de confianza: vence en una hora.</p>
+        <div class="campo"><label for="inv-email">Email</label><input type="email" id="inv-email" autocomplete="off"></div>
+        <div class="campo"><label for="inv-nombre">Nombre</label><input type="text" id="inv-nombre" autocomplete="off"></div>
+        <div class="campo"><label for="inv-rol">Rol</label><select id="inv-rol"><option value="lector">Lector</option><option value="operador" selected>Operador</option><option value="aprobador">Aprobador</option></select></div>`;
+      pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="enviar-invitacion-hub" data-t="${esc(fijo.id)}">Dar de alta</button>`;
+    } else if (m.tipo === 'link') {
+      t = m.acceso ? 'Link de acceso' : m.nueva ? 'Usuario creado' : 'Ya tenía usuario';
+      c = `<p class="chico">${m.acceso ? `Con este link, <b>${esc(m.email)}</b> entra y elige una contraseña nueva.`
+          : m.nueva ? `Mandale este link a <b>${esc(m.email)}</b>: elige su contraseña y activa el segundo factor.`
+          : `<b>${esc(m.email)}</b> ya tenía usuario: le dimos el rol. Si no recuerda su contraseña, este link le permite elegir una nueva.`}</p>
+        <div class="cmd" style="white-space:pre-wrap;word-break:break-all;user-select:all">${esc(m.link)}</div>
+        <p class="chico suave">Vence en una hora y sirve una sola vez. Es una llave de entrada: mandalo por un canal de confianza, no por un grupo.</p>`;
+      pie = `<button class="btn btn-sec" data-a="copiar-link">Copiar link</button><button class="btn btn-pri" data-a="cerrar-modal">Listo</button>`;
+    } else if (m.tipo === 'clave') {
+      t = 'Cambiar contraseña';
+      c = `<div class="campo"><label for="clave-n1">Contraseña nueva</label><input type="password" id="clave-n1" autocomplete="new-password"><span class="ayuda">Al menos 10 caracteres.</span></div>
+        <div class="campo"><label for="clave-n2">Repetila</label><input type="password" id="clave-n2" autocomplete="new-password"></div>`;
+      pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="guardar-clave">Guardar</button>`;
     } else if (m.tipo === 'alta-usuario-id') {
       const fijo = m.tenant ? tenant(m.tenant) : tenant(usuarioActual().tenant);
       t = `Alta de usuario · ${fijo.nombre}`;
@@ -1224,12 +1246,12 @@
         <div class="campo"><label for="alta-nombre">Nombre</label><input id="alta-nombre" placeholder="Nombre y apellido"></div>
         <div class="campo"><label for="alta-t">Cliente</label><select id="alta-t">${S.tenants.map(x => `<option value="${x.id}" ${x.id === pre ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select></div>
         <div class="campo"><label for="alta-rol">Rol</label><select id="alta-rol"><option value="lector">Lector</option><option value="operador" selected>Operador</option><option value="aprobador">Aprobador</option></select></div>
-        <p class="suave chico">El ID no se carga: la cuenta se crea en el proveedor de identidad, que manda la invitación y devuelve el ID. La persona elige su contraseña y enrola el segundo factor.</p>`;
+        <p class="suave chico">El ID no se carga: la cuenta se crea en el proveedor de identidad, que devuelve el ID y un link para que la persona elija su contraseña y active el segundo factor.</p>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="crear-usuario">Crear e invitar</button>`;
     } else if (m.tipo === 'usuario-creado') {
       const x = S.usuarios.find(y => y.id === m.id);
       t = 'Usuario creado';
-      c = `<p><b>${esc(x.nombre)}</b> (${esc(x.email)}) quedó como <b>${ROLES[x.rol].nombre}</b> en ${esc(tenant(x.tenant).nombre)}. Le llegó la invitación por mail.</p>
+      c = `<p><b>${esc(x.nombre)}</b> (${esc(x.email)}) quedó como <b>${ROLES[x.rol].nombre}</b> en ${esc(tenant(x.tenant).nombre)}. ${MODO === 'hub' ? 'Sin link: en desarrollo, su token se emite con <code>dc-hub token-dev</code>.' : 'Le llegó el link para elegir su contraseña.'}</p>
         <div class="campo"><span class="lbl">ID del usuario</span><div class="cmd">${esc(x.id)}</div></div>`;
       pie = `<button class="btn btn-sec" data-a="copiar-cmd">Copiar ID</button><button class="btn btn-pri" data-a="cerrar-modal">Listo</button>`;
     } else if (m.tipo === 'reset') {
@@ -1275,6 +1297,22 @@
         <div class="campo"><span class="lbl">Si no podés escanear, cargá esta clave</span><div class="cmd" style="user-select:all">${esc(L.secreto || '')}</div></div>
         <div class="campo"><span class="lbl">Código de verificación</span>${digitos}</div>
         <div class="fila"><button class="btn btn-pri" data-a="hub-verificar" ${ocupado}>Verificar y entrar</button><button class="btn btn-fantasma" data-a="logout">Cancelar</button></div></div>`;
+    } else if (L.paso === 'clave') {
+      titulo = L.tipo === 'recovery' ? 'Elegí una contraseña nueva' : 'Bienvenido a deployHub';
+      sub = L.tipo === 'recovery' ? 'Después te pide el código de tu app de autenticación.' : 'Elegí tu contraseña. Después vas a activar el segundo factor.';
+      form = `<div class="pila">
+        <div class="campo"><label for="clave-1">Contraseña</label><input id="clave-1" type="password" autocomplete="new-password"><span class="ayuda">Al menos 10 caracteres.</span></div>
+        <div class="campo"><label for="clave-2">Repetila</label><input id="clave-2" type="password" autocomplete="new-password"></div>
+        <button class="btn btn-pri" data-a="hub-definir-clave" ${ocupado}>Guardar y seguir</button></div>`;
+    } else if (L.paso === 'olvide') {
+      titulo = 'Recuperar el acceso'; sub = 'Te mandamos un link para elegir una contraseña nueva.';
+      form = `<div class="pila">
+        <div class="campo"><label for="olvide-email">Email</label><input id="olvide-email" type="email" autocomplete="username" value="${esc(L.email || '')}"></div>
+        <div class="fila"><button class="btn btn-pri" data-a="hub-olvide" ${ocupado}>Mandar el link</button><button class="btn btn-fantasma" data-a="hub-a-credenciales">Volver</button></div>
+        <p class="suave chico">Si el mail no te llega, pedile un link de acceso a quien administra los usuarios de tu organización.</p></div>`;
+    } else if (L.paso === 'olvide-ok') {
+      titulo = 'Revisá tu correo'; sub = 'Si ese email tiene usuario, te llega un link para elegir una contraseña nueva.';
+      form = `<div class="fila"><button class="btn btn-sec" data-a="hub-a-credenciales">Volver a ingresar</button></div>`;
     } else if (L.paso === 'totp') {
       form = `<div class="pila"><div class="campo"><span class="lbl">Código de verificación (TOTP)</span>${digitos}<span class="ayuda">El de tu app de autenticación para deployHub.</span></div>
         <div class="fila"><button class="btn btn-pri" data-a="hub-verificar" ${ocupado}>Verificar y entrar</button><button class="btn btn-fantasma" data-a="logout">Usar otra cuenta</button></div></div>`;
@@ -1282,7 +1320,8 @@
       form = `<div class="pila">
         <div class="campo"><label for="login-email">Email</label><input id="login-email" type="email" autocomplete="username" value="${esc(L.email || '')}"></div>
         <div class="campo"><label for="login-pass">Contraseña</label><input id="login-pass" type="password" autocomplete="current-password"></div>
-        <button class="btn btn-pri" data-a="hub-ingresar" ${ocupado}>${L.ocupado ? 'Ingresando…' : 'Ingresar'}</button></div>`;
+        <button class="btn btn-pri" data-a="hub-ingresar" ${ocupado}>${L.ocupado ? 'Ingresando…' : 'Ingresar'}</button>
+        <button class="btn btn-fantasma btn-chico" data-a="hub-a-olvide" style="align-self:flex-start">¿Olvidaste tu contraseña?</button></div>`;
     }
     return `
       <div class="login">
@@ -1323,6 +1362,16 @@
         S = vacio(); UI.loginHub = { paso: 'credenciales', error: 'La sesión venció: volvé a ingresar.' }; render();
       } else if (!silencioso) toast(e.message, true);
     } finally { refrescando = false; }
+  }
+
+  // Qué alta ofrece el hub: sin id si tiene proveedor de identidad; con link si
+  // ese proveedor los da (Supabase; el local de desarrollo no).
+  const altaSinId = () => MODO === 'hub' && !!(HUB.config() || {}).proveedor;
+  const conLinks = () => MODO === 'hub' && (HUB.config() || {}).proveedor === 'supabase';
+
+  function mostrarAlta(r) {
+    UI.modal = r.link ? { tipo: 'link', email: r.email, link: r.link, nueva: r.nueva } : { tipo: 'usuario-creado', id: r.usuario_id };
+    render();
   }
 
   async function llamar(metodo, ruta, cuerpo, ok) {
@@ -1479,7 +1528,32 @@
     'hub-verificar': () => {
       const codigo = codigoTotp();
       if (!/^\d{6}$/.test(codigo)) { toast('Ingresá los 6 dígitos del código', true); return; }
-      paso(async () => { await HUB.verificar(UI.loginHub.factorId, codigo); await recargar(); });
+      const clave = UI.loginHub.claveNueva;
+      paso(async () => {
+        await HUB.verificar(UI.loginHub.factorId, codigo);
+        // un link de recuperación de alguien con segundo factor: la contraseña va después del código
+        if (clave) { await HUB.definirClave(clave); UI.loginHub.claveNueva = null; toast('Contraseña actualizada'); }
+        await recargar();
+      });
+    },
+    'hub-definir-clave': () => {
+      const c1 = $('#clave-1').value, c2 = $('#clave-2').value;
+      if (c1.length < 10) { toast('La contraseña tiene que tener al menos 10 caracteres', true); return; }
+      if (c1 !== c2) { toast('Las dos contraseñas no coinciden', true); return; }
+      paso(async () => {
+        const st = await HUB.estadoMfa();
+        if (st.paso === 'totp') { Object.assign(UI.loginHub, st, { claveNueva: c1 }); return; }
+        await HUB.definirClave(c1);
+        if (st.paso === 'listo') return recargar();
+        Object.assign(UI.loginHub, st);
+      });
+    },
+    'hub-a-olvide': () => { UI.loginHub = { paso: 'olvide', email: ($('#login-email') || {}).value || '' }; render(); },
+    'hub-a-credenciales': () => { UI.loginHub = { paso: 'credenciales' }; render(); },
+    'hub-olvide': () => {
+      const email = $('#olvide-email').value.trim();
+      if (!email) { toast('Ingresá tu email', true); return; }
+      paso(async () => { await HUB.olvideClave(email); UI.loginHub.paso = 'olvide-ok'; });
     },
     'hub-token': () => { const t = $('#login-token').value.trim(); paso(async () => { HUB.usarToken(t); await recargar(); }); },
     'logout': async () => { clearInterval(sondeo); DEPH = null; await HUB.salir(); S = vacio(); UI.drawer = null; UI.perfil = false; UI.menu = false; UI.loginHub = { paso: 'credenciales' }; location.hash = ''; render(); },
@@ -1495,17 +1569,36 @@
       UI.drawer = { tipo: 'log', id: d.id, orden: null }; render();
       try { const o = await HUB.api('GET', `/ordenes/${encodeURIComponent(d.id)}`); if (UI.drawer && UI.drawer.id === d.id) { UI.drawer.orden = o; render(); } } catch (e) { toast(e.message, true); }
     },
-    'invitar': () => { UI.modal = { tipo: 'alta-usuario-id' }; render(); },
-    'alta-usuario-tenant': () => { UI.modal = { tipo: 'alta-usuario-id', tenant: UI.tenantParam }; render(); },
-    // Usuarios de clientes (Accusys): alta sin id, el hub crea la cuenta e invita
+    'invitar': () => { UI.modal = { tipo: altaSinId() ? 'invitar-hub' : 'alta-usuario-id' }; render(); },
+    'alta-usuario-tenant': () => { UI.modal = { tipo: altaSinId() ? 'invitar-hub' : 'alta-usuario-id', tenant: UI.tenantParam }; render(); },
+    'enviar-invitacion-hub': d => {
+      const email = $('#inv-email').value.trim();
+      if (!email) { toast('Ingresá el email', true); return; }
+      llamar('POST', '/usuarios', { email, nombre: $('#inv-nombre').value.trim() || null, rol: $('#inv-rol').value, tenant: d.t })
+        .then(async r => { await recargar(true); mostrarAlta(r); }).catch(() => {});
+    },
+    // Usuarios de clientes (Accusys): alta sin id, el hub crea la cuenta y devuelve el link
     'crear-usuario': () => {
       const cuerpo = { email: $('#alta-mail').value.trim(), nombre: $('#alta-nombre').value.trim() || null, tenant: $('#alta-t').value, rol: $('#alta-rol').value };
       llamar('POST', '/usuarios', cuerpo)
-        .then(async r => { await recargar(true); UI.modal = { tipo: 'usuario-creado', id: r.usuario_id }; render(); }).catch(() => {});
+        .then(async r => { await recargar(true); mostrarAlta(r); }).catch(() => {});
     },
     'baja-usuario': d => {
       const x = S.usuarios.find(y => y.id === d.id);
       llamar('DELETE', `/usuarios/${encodeURIComponent(d.id)}`, null, `${x ? x.nombre : 'Usuario'} dado de baja`).then(() => recargar()).catch(() => {});
+    },
+    'link-acceso': d => llamar('POST', `/usuarios/${encodeURIComponent(d.id)}/acceso`)
+      .then(r => { UI.modal = { tipo: 'link', email: r.email, link: r.link, acceso: true }; render(); }).catch(() => {}),
+    'copiar-link': () => {
+      const txt = $('.modal .cmd').textContent;
+      try { navigator.clipboard.writeText(txt).then(() => toast('Link copiado'), () => toast('Seleccionalo y copialo con Ctrl+C', true)); } catch (e) { toast('Seleccionalo y copialo con Ctrl+C', true); }
+    },
+    'cambiar-clave': () => { UI.drawer = null; UI.perfil = false; UI.modal = { tipo: 'clave' }; render(); },
+    'guardar-clave': () => {
+      const c1 = $('#clave-n1').value, c2 = $('#clave-n2').value;
+      if (c1.length < 10) { toast('La contraseña tiene que tener al menos 10 caracteres', true); return; }
+      if (c1 !== c2) { toast('Las dos contraseñas no coinciden', true); return; }
+      HUB.definirClave(c1).then(() => { UI.modal = null; render(); toast('Contraseña actualizada'); }).catch(e => toast(e.message, true));
     },
     'enviar-alta': d => {
       const id = $('#alta-id').value.trim();
@@ -1809,6 +1902,13 @@
       const foco = document.activeElement;
       if (S.sesion && !UI.modal && !UI.drawer && !UI.perfil && document.visibilityState === 'visible' && !(foco && /INPUT|SELECT|TEXTAREA/.test(foco.tagName))) recargar(true);
     }, 20000);
+    const link = HUB.linkPendiente();
+    if (link) {
+      UI.vista = '';
+      UI.loginHub = link.error ? { paso: 'credenciales', error: `${link.error} Pedile uno nuevo a quien te dio de alta, o usá "¿Olvidaste tu contraseña?".` } : { paso: 'clave', tipo: link.tipo };
+      render();
+      return;
+    }
     if (HUB.haySesion()) recargar(); else render();
   });
 })();
