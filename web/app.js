@@ -284,7 +284,7 @@
           <dt>2º factor</dt><dd><span class="pill p-ok">aal2 · TOTP verificado</span></dd>
           <dt>Id</dt><dd><code>${esc(u.id)}</code></dd>
         </dl>
-        <div class="perfil-pie"><button class="btn btn-sec btn-chico" data-a="logout">${I.logout} Cerrar sesión</button><button class="btn btn-fantasma btn-chico" data-a="recargar" title="Vuelve a pedir al hub instalaciones, órdenes, usuarios y permisos sin esperar el refresco automático">Recargar datos</button></div>
+        <div class="perfil-pie"><button class="btn btn-sec btn-chico" data-a="logout">${I.logout} Cerrar sesión</button></div>
       </div>`;
     }
     return `<div class="perfil-pop" role="dialog" aria-label="Cambiar de usuario">
