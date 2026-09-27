@@ -247,3 +247,17 @@ class Instalacion:
 
     def bloqueada(self):
         return self.ruta_lock.exists()
+
+
+def descubrir_instalaciones(raiz):
+    """Cada subdirectorio con un compose o con estado previo es una instalación."""
+    raiz = Path(raiz)
+    if not raiz.is_dir():
+        return []
+    salida = []
+    for d in sorted(raiz.iterdir()):
+        if not d.is_dir():
+            continue
+        if (d / "docker-compose.yml").is_file() or (d / ".deploycenter").is_dir():
+            salida.append(Instalacion(d))
+    return salida

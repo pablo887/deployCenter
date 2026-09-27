@@ -131,6 +131,11 @@
       "type": "string",
       "minLength": 3
     },
+    "plantilla_sha256": {
+      "description": "SHA-256 de la plantilla de compose con la que se despliega este release. Al ir dentro del manifiesto firmado, el agente puede comprobar que la plantilla que recibe es la que Accusys publicó.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "firma": {
       "description": "Firma del manifiesto. La agrega el paso de publicación; no se escribe a mano.",
       "type": "string"

@@ -1,0 +1,24 @@
+{
+  "producto": "demo",
+  "release": "3.0.0",
+  "publicado": "2026-09-22",
+  "canal": "estable",
+  "imagenes": {
+    "web": "docker.io/library/alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+  },
+  "desde_version": ">=2.0.0",
+  "db_migrations": false,
+  "rollback_seguro": true,
+  "critico_seguridad": false,
+  "variables_nuevas": [],
+  "healthchecks": [
+    {
+      "servicio": "web",
+      "url": "http://host.docker.internal:18080/",
+      "espera": 200,
+      "timeout_s": 60
+    }
+  ],
+  "changelog": "productos/demo/releases/3.0.0/changelog.md",
+  "plantilla_sha256": "a9838f93c29a3848bc66858ca7c97e766baec2178d343c8a5c71bc887dba358e"
+}

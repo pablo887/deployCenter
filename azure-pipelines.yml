@@ -35,8 +35,18 @@ steps:
   - script: python -m ruff check src tests
     displayName: Lint
 
+  # Los tests de RLS corren contra un Postgres real que levantan ellos mismos con
+  # initdb. DC_EXIGIR_PG hace que fallen si no hay Postgres, en vez de saltearse:
+  # el aislamiento entre clientes no puede quedar sin probar sin que nadie se entere.
+  - script: |
+      ls /usr/lib/postgresql/*/bin/initdb >/dev/null 2>&1 \
+        || (sudo apt-get update && sudo apt-get install -y postgresql)
+    displayName: Postgres para los tests de RLS
+
   - script: python -m pytest --junitxml=resultados.xml
-    displayName: Tests y validación de los manifiestos del repo
+    displayName: Tests, RLS y validación de los manifiestos del repo
+    env:
+      DC_EXIGIR_PG: '1'
 
   - task: PublishTestResults@2
     condition: succeededOrFailed()

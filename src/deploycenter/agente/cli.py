@@ -7,15 +7,19 @@
     dc-agent historial  --instalacion /opt/accusys/mep
     dc-agent logs       --instalacion /opt/accusys/mep --servicio api
 
+    dc-agent enrolar    --hub https://deploy.accusys.com.ar --codigo DC-XXXX-XXXX
+    dc-agent conectar   --raiz /opt/accusys --clave-publica /etc/deploycenter/cosign.pub
+
 En Fase 1 el paquete lo baja una persona y el despliegue lo dispara este CLI.
-En Fase 2 el mismo motor lo va a disparar una orden que llega del hub: el
-agente no cambia, cambia quién aprieta el botón.
+En Fase 2 el mismo motor lo dispara una orden que llega del hub: el agente no
+cambia, cambia quién aprieta el botón.
 """
 
 import argparse
 import json
 import signal
 import sys
+from pathlib import Path
 
 from ..errores import ErrorArchivo, ErrorDeployCenter, ErrorHerramienta
 from ..salida import (
@@ -31,6 +35,8 @@ from . import despliegue as desp_mod
 from .docker import Docker
 from .instalacion import ErrorBloqueo, Instalacion, Paquete
 from .preflight import Preflight
+
+DIR_TRABAJO = "/var/lib/deploycenter"
 
 
 def _contexto(args):
@@ -269,6 +275,72 @@ def cmd_ui(args):
     return OK
 
 
+def _credenciales(args):
+    from .conector import Credenciales
+    return Credenciales(Path(args.trabajo) / "credenciales.json")
+
+
+def cmd_enrolar(args):
+    from .conector import ClienteHub, host_local
+
+    verde, _rojo, amarillo, gris, fin = paleta(usar_color(args))
+    s = simbolos()
+    credenciales = _credenciales(args)
+    if credenciales.existe() and not args.reemplazar:
+        print(f"{amarillo}{s['aviso']}{fin} este servidor ya está enrolado "
+              f"({credenciales.ruta}); usá --reemplazar si es a propósito")
+        return FALLA_VALIDACION
+
+    host = args.host or host_local()
+    cliente = ClienteHub(args.hub, ca=args.ca, permitir_http=args.permitir_http)
+    datos = cliente.enrolar(args.codigo, host)
+    credenciales.guardar(args.hub, datos["agente_id"], datos["token"], datos["tenant"])
+    print(f"{verde}{s['ok']}{fin} enrolado como {datos['agente_id']} ({host})")
+    print(f"  {gris}credenciales en {credenciales.ruta}, solo legibles por este usuario{fin}")
+    return OK
+
+
+def cmd_conectar(args):
+    from .conector import ClienteHub, Conector, CredencialesInvalidas
+
+    verde, rojo, amarillo, gris, fin = paleta(usar_color(args))
+    s = simbolos()
+    datos = _credenciales(args).cargar()
+    if not args.clave_publica and not args.sin_firma:
+        print(f"{rojo}{s['mal']}{fin} falta --clave-publica: sin verificar la firma el agente "
+              f"no ejecuta órdenes del hub")
+        print(f"  {gris}--sin-firma existe solo para entornos de prueba{fin}")
+        return ERROR_USO
+
+    cliente = ClienteHub(datos["hub"], token=datos["token"], ca=args.ca,
+                         permitir_http=args.permitir_http)
+    conector = Conector(
+        cliente, args.raiz, args.trabajo,
+        docker=Docker(raiz_permitida=args.raiz_permitida or args.raiz),
+        clave_publica=args.clave_publica, exigir_firma=not args.sin_firma,
+        espera_cancelacion_s=args.espera_cancelacion, espera_poll_s=args.espera,
+        avisar_local=lambda texto: print(f"  {gris}{texto}{fin}", flush=True))
+
+    print(f"{verde}{s['ok']}{fin} {datos['agente_id']} conectado a {datos['hub']}")
+    print(f"  {gris}raíz {args.raiz} · {len(conector.inventario())} instalación/es{fin}")
+    if args.sin_firma:
+        print(f"{amarillo}{s['aviso']}{fin} --sin-firma: el agente no verifica lo que le "
+              f"manda el hub; no usar en un cliente")
+    try:
+        if args.una_vez:
+            orden = conector.ciclo(espera=args.espera)
+            print(f"  {gris}{'orden ' + orden['id'] if orden else 'sin órdenes'}{fin}")
+        else:
+            conector.correr()
+    except CredencialesInvalidas as e:
+        print(f"{rojo}{s['mal']}{fin} {e.mensaje}: el agente se detiene. "
+              f"Si fue revocado, hay que volver a enrolarlo.")
+        return FALLA_VALIDACION
+    except KeyboardInterrupt:  # pragma: no cover
+        print()
+    return OK
+
+
 # --------------------------------------------------------------------------- #
 
 def construir_parser():
@@ -331,6 +403,35 @@ def construir_parser():
     u.add_argument("--clave-publica")
     u.add_argument("--espera-cancelacion", type=int, default=desp_mod.ESPERA_CANCELACION_S)
     u.set_defaults(func=cmd_ui)
+
+    en = sub.add_parser("enrolar", help="da de alta este servidor en el hub")
+    en.add_argument("--hub", required=True, help="URL del hub, ej https://deploy.accusys.com.ar")
+    en.add_argument("--codigo", required=True, help="código de un solo uso emitido por Accusys")
+    en.add_argument("--host", help="nombre con el que se informa el servidor")
+    en.add_argument("--trabajo", default=DIR_TRABAJO,
+                    help="directorio de trabajo del agente (credenciales, buzón, paquetes)")
+    en.add_argument("--ca", help="CA adicional, si el proxy del cliente inspecciona TLS")
+    en.add_argument("--permitir-http", action="store_true", help=argparse.SUPPRESS)
+    en.add_argument("--reemplazar", action="store_true")
+    en.set_defaults(func=cmd_enrolar)
+
+    co = sub.add_parser("conectar", help="pide órdenes al hub y las ejecuta")
+    co.add_argument("--raiz", required=True,
+                    help="directorio que contiene los stacks de los productos")
+    co.add_argument("--trabajo", default=DIR_TRABAJO)
+    co.add_argument("--clave-publica",
+                    help="clave con la que Accusys firma los manifiestos; la configura el "
+                         "cliente, no la manda el hub")
+    co.add_argument("--sin-firma", action="store_true",
+                    help="no exigir firma (solo pruebas)")
+    co.add_argument("--ca")
+    co.add_argument("--permitir-http", action="store_true", help=argparse.SUPPRESS)
+    co.add_argument("--espera", type=float, default=25.0,
+                    help="segundos del long-poll de órdenes")
+    co.add_argument("--espera-cancelacion", type=int, default=desp_mod.ESPERA_CANCELACION_S)
+    co.add_argument("--una-vez", action="store_true",
+                    help="una sola vuelta: latido, una orden si hay, y sale")
+    co.set_defaults(func=cmd_conectar)
 
     return p
 

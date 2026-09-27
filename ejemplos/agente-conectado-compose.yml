@@ -1,0 +1,47 @@
+# El agente en modo conectado (Fase 2): queda levantado y le pide órdenes al hub.
+#
+# Uno por host. Toda la conexión es saliente, por 443, a deploy.accusys.com.ar.
+# No abre ningún puerto.
+#
+# Alta, una sola vez, con el código que emite Accusys:
+#
+#   docker compose run --rm agente enrolar \
+#       --hub https://deploy.accusys.com.ar --codigo DC-XXXX-XXXX --host "$(hostname -f)"
+#
+# Después:
+#
+#   docker compose up -d
+#
+# Baja: Accusys revoca el agente desde el hub. El servidor no se toca; el agente
+# ve el token revocado y se detiene.
+
+name: deploycenter-agente
+
+services:
+  agente:
+    image: registry.accusys.com.ar/deploycenter/agente:0.2.0
+    restart: unless-stopped
+    environment:
+      # Si la salida del servidor pasa por un proxy, el agente lo toma de acá.
+      # HTTPS_PROXY: http://proxy.cliente.local:3128
+      NO_PROXY: localhost,127.0.0.1
+    volumes:
+      # El socket de Docker. Es acceso de root al host: está acotado por
+      # --raiz-permitida y por el catálogo cerrado de operaciones del agente.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Los stacks de los productos instalados en este host.
+      - /opt/accusys:/stacks
+      # Credenciales, buzón y paquetes recibidos. Sobrevive a los reinicios.
+      - /var/lib/deploycenter:/var/lib/deploycenter
+      # Clave pública con la que Accusys firma los manifiestos. La pone el
+      # cliente, no la manda el hub: es lo que impide que un hub comprometido
+      # haga desplegar algo que Accusys no firmó.
+      - ./cosign.pub:/etc/deploycenter/cosign.pub:ro
+      # Si el proxy inspecciona TLS, la CA interna del cliente:
+      # - ./ca-interna.pem:/etc/deploycenter/ca.pem:ro
+    command:
+      - --raiz-permitida=/stacks
+      - conectar
+      - --raiz=/stacks
+      - --clave-publica=/etc/deploycenter/cosign.pub
+      # - --ca=/etc/deploycenter/ca.pem

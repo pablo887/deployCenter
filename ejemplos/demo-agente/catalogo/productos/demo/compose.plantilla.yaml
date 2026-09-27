@@ -1,0 +1,27 @@
+{#
+  Plantilla del producto demo. La página de nginx dice qué versión corre, así
+  se ve el despliegue (y la vuelta atrás) desde el navegador.
+#}
+# ------------------------------------------------------------------
+# GENERADO POR deployCenter — no editar a mano.
+# Producto {{ producto }} · release {{ release }}
+# ------------------------------------------------------------------
+name: {{ producto }}
+
+services:
+
+  web:
+    image: {{ imagenes.web }}
+    restart: unless-stopped
+    ports:
+      - "${DEMO_PUERTO}:80"
+    command:
+      - sh
+      - -c
+      - "printf '<!doctype html><title>demo {{ release }}</title><h1>deployHub · demo {{ release }}</h1>' > /usr/share/nginx/html/index.html && exec nginx -g 'daemon off;'"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+      start_period: 2s

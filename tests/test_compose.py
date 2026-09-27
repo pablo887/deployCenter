@@ -121,3 +121,21 @@ class TestPlantillaRealDeMep:
         # los secretos no quedan en el compose, van por interpolación de compose
         assert "${MEP_DB_CLAVE}" in texto
         assert "reemplazar-en-el-servidor-del-cliente" not in texto
+
+
+class TestSandbox:
+    """En Fase 2 la plantilla viaja desde el hub: renderizarla no puede ejecutar código."""
+
+    def test_no_se_puede_escapar_a_python(self, base):
+        maliciosa = "{{ cycler.__init__.__globals__.os.popen('id').read() }}"
+        with pytest.raises(ErrorArchivo):
+            compose.render(maliciosa, base)
+
+    def test_no_se_accede_a_atributos_internos(self, base):
+        with pytest.raises(ErrorArchivo):
+            compose.render("{{ imagenes.__class__.__mro__ }}", base)
+
+    def test_la_huella_es_el_sha256_del_contenido(self):
+        import hashlib
+        assert compose.huella("abc") == hashlib.sha256(b"abc").hexdigest()
+        assert compose.huella(b"abc") == compose.huella("abc")

@@ -6,6 +6,7 @@
     dc render     --producto mep --release 4.7.0 --entorno .env --salida docker-compose.yml
     dc firmar     productos/mep/releases/4.7.0/manifiesto.json --clave cosign.key
     dc verificar  productos/mep/releases/4.7.0/manifiesto.json --clave-publica cosign.pub
+    dc sellar     productos/mep/releases/4.7.0/manifiesto.json --escribir
     dc nuevo-release --producto mep --version 4.7.1 --desde '>=4.5.0'
     dc schema
 
@@ -60,6 +61,20 @@ def cargar_producto(raiz, producto):
     if not isinstance(datos, dict):
         raise ErrorArchivo(f"{ruta} debería ser un mapeo YAML")
     return datos
+
+
+def ruta_plantilla(raiz, producto, datos_producto=None):
+    datos_producto = datos_producto or cargar_producto(raiz, producto)
+    return Path(raiz) / "productos" / producto / datos_producto.get(
+        "plantilla", "compose.plantilla.yaml")
+
+
+def huella_plantilla(raiz, producto):
+    ruta = ruta_plantilla(raiz, producto)
+    try:
+        return compose.huella(ruta.read_bytes())
+    except OSError as e:
+        raise ErrorArchivo(f"no se pudo leer {ruta}: {e}") from e
 
 
 # --------------------------------------------------------------------------- #
@@ -212,6 +227,36 @@ def cmd_verificar(args):
     return FALLA_VALIDACION
 
 
+def cmd_sellar(args):
+    """Escribe en el manifiesto la huella de la plantilla del producto.
+
+    Se corre antes de firmar: la huella queda dentro de lo firmado, y así el
+    agente puede comprobar que la plantilla que le entrega el hub es la que
+    publicó Accusys.
+    """
+    verde, _rojo, amarillo, gris, fin = _color(_usar_color(args))
+    s = simbolos()
+    raiz = Path(args.raiz) if args.raiz else raiz_por_defecto()
+    ruta = Path(args.manifiesto)
+    m = mf.cargar(ruta)
+    nueva = huella_plantilla(raiz, m["producto"])
+    actual = m.get("plantilla_sha256")
+
+    if actual == nueva:
+        print(f"{verde}{s['ok']}{fin} la huella ya coincide con la plantilla de {m['producto']}")
+        return OK
+    print(f"  plantilla_sha256  {gris}{actual or '(sin huella)'}{fin} → {nueva}")
+    if not args.escribir:
+        print(f"{amarillo}{s['aviso']}{fin} repetí con --escribir para guardarla")
+        return FALLA_VALIDACION
+    m["plantilla_sha256"] = nueva
+    mf.guardar(m, ruta)
+    print(f"{verde}{s['ok']}{fin} {ruta}")
+    if m.get("firma") or ruta.with_suffix(ruta.suffix + firma.SUFIJO_FIRMA).is_file():
+        print(f"  {amarillo}el manifiesto cambió: hay que volver a firmarlo{fin}")
+    return OK
+
+
 def cmd_schema(_args):
     print(json.dumps(mf.cargar_schema(), indent=2, ensure_ascii=False))
     return OK
@@ -292,6 +337,8 @@ def cmd_nuevo_release(args):
         "variables_nuevas": [],
         "healthchecks": checks,
         "changelog": f"productos/{args.producto}/releases/{args.version}/changelog.md",
+        "plantilla_sha256": compose.huella(
+            ruta_plantilla(raiz, args.producto, producto).read_bytes()),
     }
 
     carpeta = raiz / "productos" / args.producto / "releases" / args.version
@@ -389,6 +436,12 @@ def construir_parser():
     emp.add_argument("--release", required=True)
     emp.add_argument("--salida", required=True, help="directorio destino del paquete")
     emp.set_defaults(func=cmd_empaquetar)
+
+    se = sub.add_parser("sellar",
+                        help="escribe en el manifiesto la huella de la plantilla, antes de firmar")
+    se.add_argument("manifiesto")
+    se.add_argument("--escribir", action="store_true", help="aplica el cambio al archivo")
+    se.set_defaults(func=cmd_sellar)
 
     s = sub.add_parser("schema", help="imprime el JSON Schema del manifiesto")
     s.set_defaults(func=cmd_schema)

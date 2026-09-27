@@ -149,3 +149,25 @@ class TestSchema:
         assert correr("schema") == OK
         datos = json.loads(capsys.readouterr().out)
         assert datos["title"].startswith("Manifiesto")
+
+
+class TestSellar:
+    def test_el_release_del_repo_ya_esta_sellado(self, repo, capsys):
+        ruta = repo / "productos/mep/releases/4.7.0/manifiesto.json"
+        assert correr("--raiz", str(repo), "sellar", str(ruta)) == OK
+        assert "coincide" in capsys.readouterr().out
+
+    def test_detecta_una_plantilla_cambiada_y_la_vuelve_a_sellar(self, repo, capsys):
+        ruta = repo / "productos/mep/releases/4.7.0/manifiesto.json"
+        plantilla = repo / "productos/mep/compose.plantilla.yaml"
+        plantilla.write_text(plantilla.read_text(encoding="utf-8") + "\n# cambio\n",
+                             encoding="utf-8")
+        assert correr("--raiz", str(repo), "sellar", str(ruta)) == FALLA_VALIDACION
+        assert correr("--raiz", str(repo), "sellar", str(ruta), "--escribir") == OK
+        assert correr("--raiz", str(repo), "sellar", str(ruta)) == OK
+
+    def test_nuevo_release_nace_sellado(self, repo):
+        assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+                      "--version", "4.7.1", "--desde", ">=4.5.0") == OK
+        m = json.loads((repo / "productos/mep/releases/4.7.1/manifiesto.json").read_text())
+        assert len(m["plantilla_sha256"]) == 64

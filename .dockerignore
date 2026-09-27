@@ -1,0 +1,15 @@
+# Lo que no entra al contexto de build de ninguna imagen. Sobre todo .env: tiene
+# claves y no tiene por qué viajar al daemon ni quedar en una capa.
+.git
+.env
+*.env
+*.key
+*.pem
+.venv
+venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.demo
+tests
+docs
