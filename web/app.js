@@ -17,7 +17,7 @@
   let S = cargar() || nuevo();
   let DEP = null;          // despliegue en curso (runtime, no se persiste)
   let DEPH = null;         // modo hub: la orden real que se está siguiendo
-  let UI = { vista: '', inst: null, prod: null, tenantParam: null, prodRel: null, login: { user: 'u1', paso: 1 }, drawer: null, modal: null, filtroAud: { tenant: '', tipo: '' }, filtroUsu: '' };
+  let UI = { vista: '', inst: null, prod: null, tenantParam: null, prodRel: null, login: { user: 'u1', paso: 1 }, drawer: null, modal: null, perfil: false, menu: false, colapsado: (() => { try { return localStorage.getItem('dc-side-colapsado') === '1'; } catch (e) { return false; } })(), filtroAud: { tenant: '', tipo: '' }, filtroUsu: '' };
 
   function nuevo() {
     const s = JSON.parse(JSON.stringify(SEED));
@@ -217,7 +217,7 @@
     UI.vista = v;
     const cuerpo = (VISTAS_EXTRA[v] || vistas[v]).render();
     app.innerHTML = `
-      <div class="app" id="shell">
+      <div class="app${UI.menu ? ' menu-abierto' : ''}${UI.colapsado ? ' side-colapsado' : ''}" id="shell">
         ${side(vistas, v)}
         <div style="min-width:0">
           ${top(u)}
@@ -233,7 +233,7 @@
   function side(vistas, v) {
     const mails = misMails().length;
     const items = Object.entries(vistas).map(([k, x]) =>
-      `<a href="#${k}" class="${k === v || (v === 'instalacion' && k === 'instalaciones') || (v === 'desplegar' && k === 'catalogo') ? 'activo' : ''}">${x.icono}<span>${x.titulo}</span>${x.cuenta ? `<span class="cuenta">${x.cuenta()}</span>` : ''}</a>`).join('');
+      `<a href="#${k}" title="${esc(x.titulo)}" class="${k === v || (v === 'instalacion' && k === 'instalaciones') || (v === 'desplegar' && k === 'catalogo') ? 'activo' : ''}">${x.icono}<span>${x.titulo}</span>${x.cuenta ? `<span class="cuenta">${x.cuenta()}</span>` : ''}</a>`).join('');
     return `
       <aside class="side">
         <div class="marca"><span class="m">D</span><span class="n">deploy<i>Hub</i></span></div>
@@ -255,18 +255,44 @@
     const n = misMails().filter(m => m.fecha.startsWith(S.hoy)).length;
     return `
       <header class="top">
-        <button class="icono-btn hamburguesa" data-a="menu" aria-label="Abrir menú">${I.menu}</button>
+        <button class="icono-btn hamburguesa" data-a="menu" aria-label="${UI.colapsado ? 'Expandir menú' : 'Colapsar menú'}" title="${UI.colapsado ? 'Expandir menú' : 'Colapsar menú'}">${I.menu}</button>
         <div class="tenant">
           <b>${t ? esc(t.nombre) : 'Accusys'}</b>
           <small>${t ? `Tenant <code>${t.id}</code> · ${t.estado === 'activo' ? 'activo' : 'suspendido'}` : 'Vista interna · todo el parque'}</small>
         </div>
         <div class="espacio"></div>
         ${MODO === 'hub' ? '' : `<button class="icono-btn" data-a="abrir-mails" aria-label="Avisos por mail">${I.mail}${n ? `<span class="punto">${n}</span>` : ''}</button>`}
-        <button class="usuario" data-a="abrir-usuarios" aria-label="${MODO === 'hub' ? 'Tu sesión' : 'Cambiar de usuario'}">
-          <span class="avatar">${iniciales(u.nombre)}</span>
-          <span class="quien"><b>${esc(u.nombre)}</b><small>${ROLES[u.rol].nombre} · ${ROLES[u.rol].lado}</small></span>
-        </button>
+        <div class="perfil">
+          <button class="usuario" data-a="abrir-usuarios" aria-label="${MODO === 'hub' ? 'Tu sesión' : 'Cambiar de usuario'}" aria-haspopup="dialog" aria-expanded="${UI.perfil ? 'true' : 'false'}">
+            <span class="avatar">${iniciales(u.nombre)}</span>
+            <span class="quien"><b>${esc(u.nombre)}</b><small>${ROLES[u.rol].nombre} · ${ROLES[u.rol].lado}</small></span>
+          </button>
+          ${UI.perfil ? perfilHtml(u) : ''}
+        </div>
       </header>`;
+  }
+
+  // Tarjeta que se despliega debajo del avatar (no es un drawer lateral)
+  function perfilHtml(u) {
+    const t = u.tenant ? tenant(u.tenant) : null;
+    if (MODO === 'hub') {
+      const id = HUB.usuario() || {};
+      return `<div class="perfil-pop" role="dialog" aria-label="Tu sesión">
+        <div class="perfil-cab"><span class="avatar">${iniciales(u.nombre)}</span><div class="perfil-quien"><b>${esc(u.nombre)}</b><small>${esc(u.email || id.email || '')}</small></div></div>
+        <dl class="datos">
+          <dt>Rol</dt><dd>${ROLES[u.rol].nombre} · ${t ? esc(t.nombre) : 'Accusys'}</dd>
+          <dt>2º factor</dt><dd><span class="pill p-ok">aal2 · TOTP verificado</span></dd>
+          <dt>Id</dt><dd><code>${esc(u.id)}</code></dd>
+        </dl>
+        <div class="perfil-pie"><button class="btn btn-sec btn-chico" data-a="logout">${I.logout} Cerrar sesión</button>${(HUB.config() || {}).identidad === 'supabase' ? '<button class="btn btn-fantasma btn-chico" data-a="cambiar-clave">Cambiar contraseña</button>' : ''}</div>
+      </div>`;
+    }
+    return `<div class="perfil-pop" role="dialog" aria-label="Cambiar de usuario">
+      <div class="perfil-cab"><span class="avatar">${iniciales(u.nombre)}</span><div class="perfil-quien"><b>${esc(u.nombre)}</b><small>${ROLES[u.rol].nombre} · ${t ? esc(t.nombre) : 'Accusys'}</small></div></div>
+      <div class="suave chico">Probá la plataforma desde cada rol:</div>
+      <div class="pila perfil-lista">${S.usuarios.map(x => `<button class="demo-user ${x.id === S.sesion ? 'sel' : ''}" data-a="cambiar-user" data-id="${x.id}"><b>${esc(x.nombre)}</b><small>${ROLES[x.rol].nombre} · ${x.tenant ? esc(tenant(x.tenant).nombre) : 'Accusys'}</small></button>`).join('')}</div>
+      <div class="perfil-pie"><button class="btn btn-sec btn-chico" data-a="logout">${I.logout} Cerrar sesión</button><button class="btn btn-fantasma btn-chico" data-a="pedir-reset">Reiniciar datos de demo</button></div>
+    </div>`;
   }
 
   function bannerDep() {
@@ -1094,20 +1120,6 @@
       const ms = misMails();
       cuerpo = `<p class="suave chico">Lo que la plataforma mandó. En producción sale por mail; acá queda la bandeja para ver el circuito.</p>
         <div>${ms.map(m => `<div class="mail"><b>${esc(m.asunto)}</b><span class="chico">${esc(m.cuerpo)}</span><small>${esc(m.fecha)} · para ${esc(m.para)}</small></div>`).join('') || '<div class="vacio">Sin avisos.</div>'}</div>`;
-    } else if (d.tipo === 'usuarios' && MODO === 'hub') {
-      const u = usuarioActual(), t = u.tenant ? tenant(u.tenant) : null, id = HUB.usuario() || {};
-      titulo = 'Tu sesión';
-      cuerpo = `<dl class="datos"><dt>Usuario</dt><dd>${esc(u.nombre)}<span class="sub">${esc(u.email || id.email || '')}</span></dd>
-          <dt>Rol</dt><dd>${ROLES[u.rol].nombre} · ${t ? esc(t.nombre) : 'Accusys'}</dd>
-          <dt>Segundo factor</dt><dd><span class="pill p-ok">aal2 · TOTP verificado</span></dd>
-          <dt>Id</dt><dd><code>${esc(u.id)}</code></dd></dl>
-        <p class="suave chico">Qué podés hacer lo deciden las tablas del hub, no el token: si te cambian el rol, vale desde el próximo pedido.</p>
-        <div class="fila" style="border-top:1px solid var(--linea);padding-top:14px"><button class="btn btn-sec" data-a="logout">${I.logout} Cerrar sesión</button>${(HUB.config() || {}).identidad === 'supabase' ? '<button class="btn btn-sec" data-a="cambiar-clave">Cambiar contraseña</button>' : ''}<button class="btn btn-fantasma" data-a="recargar">Recargar datos</button></div>`;
-    } else if (d.tipo === 'usuarios') {
-      titulo = 'Cambiar de usuario';
-      cuerpo = `<p class="suave chico">Probá la plataforma desde cada rol. El estado del mock se conserva.</p>
-        <div class="pila" style="gap:8px">${S.usuarios.map(x => `<button class="demo-user ${x.id === S.sesion ? 'sel' : ''}" data-a="cambiar-user" data-id="${x.id}"><b>${esc(x.nombre)}</b><small>${ROLES[x.rol].nombre} · ${x.tenant ? esc(tenant(x.tenant).nombre) : 'Accusys'}</small></button>`).join('')}</div>
-        <div class="fila" style="border-top:1px solid var(--linea);padding-top:14px"><button class="btn btn-sec" data-a="logout">${I.logout} Cerrar sesión</button><button class="btn btn-fantasma" data-a="pedir-reset">Reiniciar datos de demo</button></div>`;
     } else if (d.tipo === 'manifiesto') {
       const r = rel(d.p, d.v);
       const man = MODO === 'hub' ? S.manifiestos[`${d.p}@${d.v}`] : manifiesto(d.p, r);
@@ -1544,8 +1556,8 @@
       paso(async () => { await HUB.olvideClave(email); UI.loginHub.paso = 'olvide-ok'; });
     },
     'hub-token': () => { const t = $('#login-token').value.trim(); paso(async () => { HUB.usarToken(t); await recargar(); }); },
-    'logout': async () => { clearInterval(sondeo); DEPH = null; await HUB.salir(); S = vacio(); UI.drawer = null; UI.loginHub = { paso: 'credenciales' }; location.hash = ''; render(); },
-    'recargar': () => { UI.drawer = null; recargar(); },
+    'logout': async () => { clearInterval(sondeo); DEPH = null; await HUB.salir(); S = vacio(); UI.drawer = null; UI.perfil = false; UI.menu = false; UI.loginHub = { paso: 'credenciales' }; location.hash = ''; render(); },
+    'recargar': () => { UI.drawer = null; UI.perfil = false; recargar(); },
     'iniciar-deploy': d => ordenar(inst(UI.inst), 'preflight', d.v).catch(() => {}),
     'repetir-preflight': () => ordenar(inst(DEPH.instId), 'preflight', DEPH.orden.release).catch(() => {}),
     'desplegar-hub': () => ordenar(inst(DEPH.instId), 'desplegar', DEPH.orden.release).catch(() => {}),
@@ -1581,7 +1593,7 @@
       const txt = $('.modal .cmd').textContent;
       try { navigator.clipboard.writeText(txt).then(() => toast('Link copiado'), () => toast('Seleccionalo y copialo con Ctrl+C', true)); } catch (e) { toast('Seleccionalo y copialo con Ctrl+C', true); }
     },
-    'cambiar-clave': () => { UI.drawer = null; UI.modal = { tipo: 'clave' }; render(); },
+    'cambiar-clave': () => { UI.drawer = null; UI.perfil = false; UI.modal = { tipo: 'clave' }; render(); },
     'guardar-clave': () => {
       const c1 = $('#clave-n1').value, c2 = $('#clave-n2').value;
       if (c1.length < 10) { toast('La contraseña tiene que tener al menos 10 caracteres', true); return; }
@@ -1684,16 +1696,23 @@
      ============================================================ */
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-a]');
+    // click afuera: cierra la tarjeta de sesión y el menú lateral (mobile)
+    if (UI.perfil && !e.target.closest('.perfil')) { UI.perfil = false; if (!el) render(); }
+    if (UI.menu && !e.target.closest('.side, .hamburguesa')) cerrarMenu();
     if (!el) return;
     // clicks dentro de drawer/modal no deben cerrar el velo
     if ((el.dataset.a === 'cerrar-drawer' || el.dataset.a === 'cerrar-modal') && el.classList.contains('velo') && e.target.closest('[data-stop]')) return;
     const a = el.dataset.a, d = el.dataset;
     const acc = (MODO === 'hub' && ACCIONES_HUB[a]) || ACCIONES[a];
     if (acc) { e.preventDefault(); acc(d, el, e); }
+    if (!UI.perfil) { const pp = $('.perfil-pop'); if (pp) pp.remove(); }
   });
 
+  function cerrarMenu() { UI.menu = false; const sh = $('#shell'); if (sh) sh.classList.remove('menu-abierto'); }
+
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && (UI.drawer || UI.modal)) { UI.drawer = null; UI.modal = null; render(); }
+    if (e.key === 'Escape' && (UI.drawer || UI.modal || UI.perfil)) { UI.drawer = null; UI.modal = null; UI.perfil = false; render(); }
+    if (e.key === 'Escape' && UI.menu) cerrarMenu();
     if (e.key === 'Enter' && e.target.matches('article[data-a]')) e.target.click();
     if (e.key === 'Enter' && e.target.closest('.login-form') && e.target.matches('input')) { const b = $('.login-form .btn-pri'); if (b && !b.disabled) b.click(); }
   });
@@ -1707,14 +1726,20 @@
       if (!/^\d{6}$/.test(code)) { toast('Ingresá los 6 dígitos del código', true); return; }
       S.sesion = UI.login.user; UI.vista = ''; guardar(); location.hash = ''; render();
     },
-    'menu': () => $('#shell').classList.toggle('menu-abierto'),
-    'abrir-mails': () => { UI.drawer = { tipo: 'mails' }; render(); },
-    'abrir-usuarios': () => { UI.drawer = { tipo: 'usuarios' }; render(); },
+    // en mobile el menú se abre encima; en escritorio se colapsa a solo íconos
+    'menu': () => {
+      UI.perfil = false;
+      if (matchMedia('(max-width: 880px)').matches) UI.menu = !UI.menu;
+      else { UI.colapsado = !UI.colapsado; try { localStorage.setItem('dc-side-colapsado', UI.colapsado ? '1' : '0'); } catch (e) { /* sin storage */ } }
+      render();
+    },
+    'abrir-mails': () => { UI.drawer = { tipo: 'mails' }; UI.perfil = false; render(); },
+    'abrir-usuarios': () => { UI.perfil = !UI.perfil; render(); },
     'cerrar-drawer': () => { UI.drawer = null; render(); },
     'cerrar-modal': () => { UI.modal = null; render(); },
-    'cambiar-user': d => { S.sesion = d.id; UI.drawer = null; UI.vista = ''; UI.inst = null; UI.prod = null; guardar(); location.hash = ''; render(); toast('Sesión cambiada a ' + usuarioActual().nombre); },
-    'logout': () => { S.sesion = null; UI.drawer = null; UI.login = { user: 'u1', paso: 1 }; guardar(); render(); },
-    'pedir-reset': () => { UI.drawer = null; UI.modal = { tipo: 'reset' }; render(); },
+    'cambiar-user': d => { S.sesion = d.id; UI.drawer = null; UI.perfil = false; UI.vista = ''; UI.inst = null; UI.prod = null; guardar(); location.hash = ''; render(); toast('Sesión cambiada a ' + usuarioActual().nombre); },
+    'logout': () => { S.sesion = null; UI.drawer = null; UI.perfil = false; UI.menu = false; UI.login = { user: 'u1', paso: 1 }; guardar(); render(); },
+    'pedir-reset': () => { UI.drawer = null; UI.perfil = false; UI.modal = { tipo: 'reset' }; render(); },
     'reset': () => { const ses = S.sesion; if (DEP) clearInterval(DEP.timer); DEP = null; S = nuevo(); S.sesion = ses; UI.modal = null; guardar(); render(); toast('Datos de demo reiniciados'); },
     'ver-inst': d => { UI.inst = d.id; UI.vista = 'instalacion'; location.hash = 'instalacion'; render(); },
     'ir-catalogo': (d, el, e) => { e.stopPropagation(); const i = inst(d.id); UI.prod = i.producto; UI.inst = i.id; UI.vista = 'catalogo'; if (location.hash === '#catalogo') render(); else location.hash = 'catalogo'; },
@@ -1860,8 +1885,7 @@
 
   window.addEventListener('hashchange', () => {
     UI.vista = location.hash.replace('#', '');
-    UI.drawer = null;
-    const sh = $('#shell'); if (sh) sh.classList.remove('menu-abierto');
+    UI.drawer = null; UI.perfil = false; UI.menu = false;
     render();
     window.scrollTo(0, 0);
   });
@@ -1876,7 +1900,7 @@
     // el parque cambia solo (latidos, órdenes de otros): se refresca sin molestar
     setInterval(() => {
       const foco = document.activeElement;
-      if (S.sesion && !UI.modal && !UI.drawer && document.visibilityState === 'visible' && !(foco && /INPUT|SELECT|TEXTAREA/.test(foco.tagName))) recargar(true);
+      if (S.sesion && !UI.modal && !UI.drawer && !UI.perfil && document.visibilityState === 'visible' && !(foco && /INPUT|SELECT|TEXTAREA/.test(foco.tagName))) recargar(true);
     }, 20000);
     const link = HUB.linkPendiente();
     if (link) {
