@@ -17,7 +17,7 @@
   let S = cargar() || nuevo();
   let DEP = null;          // despliegue en curso (runtime, no se persiste)
   let DEPH = null;         // modo hub: la orden real que se está siguiendo
-  let UI = { vista: '', inst: null, prod: null, tenantParam: null, prodRel: null, login: { user: 'u1', paso: 1 }, drawer: null, modal: null, perfil: false, menu: false, filtroAud: { tenant: '', tipo: '' }, filtroUsu: '' };
+  let UI = { vista: '', inst: null, prod: null, tenantParam: null, prodRel: null, login: { user: 'u1', paso: 1 }, drawer: null, modal: null, perfil: false, menu: false, colapsado: (() => { try { return localStorage.getItem('dc-side-colapsado') === '1'; } catch (e) { return false; } })(), filtroAud: { tenant: '', tipo: '' }, filtroUsu: '' };
 
   function nuevo() {
     const s = JSON.parse(JSON.stringify(SEED));
@@ -217,7 +217,7 @@
     UI.vista = v;
     const cuerpo = (VISTAS_EXTRA[v] || vistas[v]).render();
     app.innerHTML = `
-      <div class="app${UI.menu ? ' menu-abierto' : ''}" id="shell">
+      <div class="app${UI.menu ? ' menu-abierto' : ''}${UI.colapsado ? ' side-colapsado' : ''}" id="shell">
         ${side(vistas, v)}
         <div style="min-width:0">
           ${top(u)}
@@ -233,7 +233,7 @@
   function side(vistas, v) {
     const mails = misMails().length;
     const items = Object.entries(vistas).map(([k, x]) =>
-      `<a href="#${k}" class="${k === v || (v === 'instalacion' && k === 'instalaciones') || (v === 'desplegar' && k === 'catalogo') ? 'activo' : ''}">${x.icono}<span>${x.titulo}</span>${x.cuenta ? `<span class="cuenta">${x.cuenta()}</span>` : ''}</a>`).join('');
+      `<a href="#${k}" title="${esc(x.titulo)}" class="${k === v || (v === 'instalacion' && k === 'instalaciones') || (v === 'desplegar' && k === 'catalogo') ? 'activo' : ''}">${x.icono}<span>${x.titulo}</span>${x.cuenta ? `<span class="cuenta">${x.cuenta()}</span>` : ''}</a>`).join('');
     return `
       <aside class="side">
         <div class="marca"><span class="m">D</span><span class="n">deploy<i>Hub</i></span></div>
@@ -255,7 +255,7 @@
     const n = misMails().filter(m => m.fecha.startsWith(S.hoy)).length;
     return `
       <header class="top">
-        <button class="icono-btn hamburguesa" data-a="menu" aria-label="Abrir menú">${I.menu}</button>
+        <button class="icono-btn hamburguesa" data-a="menu" aria-label="${UI.colapsado ? 'Expandir menú' : 'Colapsar menú'}" title="${UI.colapsado ? 'Expandir menú' : 'Colapsar menú'}">${I.menu}</button>
         <div class="tenant">
           <b>${t ? esc(t.nombre) : 'Accusys'}</b>
           <small>${t ? `Tenant <code>${t.id}</code> · ${t.estado === 'activo' ? 'activo' : 'suspendido'}` : 'Vista interna · todo el parque'}</small>
@@ -1633,7 +1633,13 @@
       if (!/^\d{6}$/.test(code)) { toast('Ingresá los 6 dígitos del código', true); return; }
       S.sesion = UI.login.user; UI.vista = ''; guardar(); location.hash = ''; render();
     },
-    'menu': () => { UI.menu = !UI.menu; UI.perfil = false; render(); },
+    // en mobile el menú se abre encima; en escritorio se colapsa a solo íconos
+    'menu': () => {
+      UI.perfil = false;
+      if (matchMedia('(max-width: 880px)').matches) UI.menu = !UI.menu;
+      else { UI.colapsado = !UI.colapsado; try { localStorage.setItem('dc-side-colapsado', UI.colapsado ? '1' : '0'); } catch (e) { /* sin storage */ } }
+      render();
+    },
     'abrir-mails': () => { UI.drawer = { tipo: 'mails' }; UI.perfil = false; render(); },
     'abrir-usuarios': () => { UI.perfil = !UI.perfil; render(); },
     'cerrar-drawer': () => { UI.drawer = null; render(); },
