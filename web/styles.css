@@ -123,7 +123,16 @@ button,input,select,textarea{font:inherit;color:inherit}
 .top .tenant b{font-family:var(--display);font-weight:600;font-size:.98rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .top .tenant small{color:var(--gris);font-size:.75rem}
 .top .espacio{flex:1}
-.hamburguesa{display:none}
+.hamburguesa{display:grid}
+@media (min-width: 881px){
+  .app{transition:grid-template-columns .18s ease}
+  .app.side-colapsado{grid-template-columns:68px minmax(0,1fr)}
+  .side-colapsado .side{padding:22px 10px;align-items:center}
+  .side-colapsado .marca{padding:0}
+  .side-colapsado .marca .n,.side-colapsado .nav-titulo,.side-colapsado .nav a span,.side-colapsado .side-pie{display:none}
+  .side-colapsado .nav{width:100%}
+  .side-colapsado .nav a{justify-content:center;padding:10px 0}
+}
 .icono-btn{display:grid;place-items:center;width:36px;height:36px;border-radius:9px;border:1px solid var(--linea);background:var(--surface);cursor:pointer;position:relative;color:var(--ink-2)}
 .icono-btn:hover{background:var(--surface-2)}
 .icono-btn svg{width:18px;height:18px}
@@ -134,6 +143,20 @@ button,input,select,textarea{font:inherit;color:inherit}
 .usuario .quien{display:flex;flex-direction:column;line-height:1.15;text-align:left}
 .usuario .quien b{font-size:.84rem;font-weight:600}
 .usuario .quien small{font-size:.7rem;color:var(--gris)}
+.perfil{position:relative}
+.perfil-pop{position:absolute;top:calc(100% + 8px);right:0;width:min(340px,calc(100vw - 32px));z-index:30;background:var(--surface);
+  border:1px solid var(--linea);border-radius:12px;box-shadow:var(--sombra-alta);padding:14px;display:flex;flex-direction:column;gap:12px;animation:baja .12s ease}
+.perfil-pop::before{content:"";position:absolute;top:-6px;right:18px;width:10px;height:10px;background:var(--surface);
+  border-left:1px solid var(--linea);border-top:1px solid var(--linea);transform:rotate(45deg)}
+.perfil-cab{display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--linea)}
+.perfil-cab .avatar{width:38px;height:38px;font-size:.8rem}
+.perfil-quien{display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.perfil-quien b{font-size:.92rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perfil-quien small{font-size:.78rem;color:var(--gris);overflow-wrap:anywhere}
+.perfil-pop .datos{font-size:.8rem}
+.perfil-lista{gap:6px;max-height:50vh;overflow:auto}
+.perfil-pie{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--linea)}
+@keyframes baja{from{transform:translateY(-4px);opacity:0}}
 
 .contenido{padding:28px 28px 80px;max-width:1640px;width:100%;display:flex;flex-direction:column;gap:22px}
 .cabecera{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
@@ -388,7 +411,6 @@ textarea{font-family:var(--mono);font-size:.8rem;line-height:1.55;resize:vertica
   .side{position:fixed;left:0;top:0;bottom:0;width:260px;z-index:40;transform:translateX(-100%);transition:transform .2s;height:100%;
     padding-top:calc(22px + env(safe-area-inset-top,0px))}
   .app.menu-abierto .side{transform:none;box-shadow:var(--sombra-alta)}
-  .hamburguesa{display:grid}
   .top{padding:10px 16px}
   .usuario .quien{display:none}
   .contenido{padding:20px 16px 60px}
