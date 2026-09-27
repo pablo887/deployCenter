@@ -417,14 +417,16 @@ con la web en http://localhost:8000. La identidad es la del proyecto de
 Supabase; los roles, los clientes y el parque viven en la base local.
 
 ```bash
-cp .env.ejemplo .env                   # DB_PASSWORD, SUPABASE_URL y la publishable key
+cp .env.ejemplo .env                   # DB_PASSWORD, SUPABASE_URL, la publishable y la secret key
 docker compose up -d --build
 # ingresá en la web: sin alta, te muestra tu id. Con ese id:
 docker compose exec hub dc-hub usuario <uuid> --rol comercial --email vos@accusys.com.ar
 ```
 
 Desde ahí, Comercial crea los clientes, sus productos y sus usuarios desde la
-web; Soporte emite los códigos para enrolar agentes.
+web; Soporte emite los códigos para enrolar agentes. Los usuarios se dan de alta
+con el email, sin id: el hub crea la cuenta con la secret key, Supabase manda la
+invitación y el id vuelve con el usuario creado.
 
 Para ver un despliegue real sin salir de tu máquina, el perfil `agente-demo`
 suma un agente y un producto de prueba (nginx, con un release roto a propósito
@@ -524,8 +526,8 @@ que no pasa por ahí no llega a main.
 - [x] Registro abierto cerrado en `deploycenter-dev`: las altas van solo por
       la secret key (o las invitaciones, cuando estén)
 - [ ] Dominio propio para Auth (`auth.accusys.com.ar`)
-- [ ] Invitaciones: hoy el usuario se crea en el proveedor y se le asigna el rol
-      con `dc-hub usuario` o la API; falta que el hub mande la invitación
+- [x] Invitaciones: el alta desde la web (Comercial, Publicador, Aprobador) crea
+      la cuenta en el proveedor, manda la invitación y devuelve el id
 - [ ] Variables nuevas desde la web: el formulario tiene que escribir en el
       `.env` del servidor sin que el valor pase por el hub
 - [ ] Órdenes entregadas sin respuesta: si el agente muere después de tomar
