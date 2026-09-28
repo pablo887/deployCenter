@@ -37,9 +37,10 @@ firmar, `cosign`.
 make demo
 ```
 
-Eso corre, contra un cliente de ejemplo y sin tocar nada real: validar el
-manifiesto, comparar las variables, generar el compose y pasárselo a
-`docker compose config` para confirmar que lo acepta.
+Eso corre, contra un cliente de ejemplo y sin tocar nada real, el estándar de
+MEP: validar los manifiestos del núcleo y del stack de un banco, comparar las
+variables, generar los dos compose y pasárselos a `docker compose config` para
+confirmar que los acepta.
 
 ## Comandos
 
@@ -59,11 +60,19 @@ dc variables productos/mep/releases/4.7.0/manifiesto.json --entorno /ruta/.env
 # generar el docker-compose.yml de un cliente
 dc render --producto mep --release 4.7.0 --entorno /ruta/.env --salida docker-compose.yml
 
-# esqueleto de un release nuevo
+# esqueleto de un release nuevo (con --borrador, en borradores/: no se publica)
 dc nuevo-release --producto mep --version 4.7.1 --desde '>=4.5.0'
 
+# publicar un borrador ya pinneado: lo mueve a releases/
+dc promover productos/mep/borradores/4.7.1/manifiesto.json
+
 # con un tag distinto por servicio (MEP versiona cada microservicio aparte)
-dc nuevo-release --producto mep --version 4.7.1 --tag api=1.1.36 --tag web=1.1.35
+dc nuevo-release --producto mep --version 2026.11.0 --borrador \
+  --tag mep-api=1.1.37 --tag mep-app=1.1.36 --tag mep-worker=1.0.16 --tag mep-bcra=1.0.30
+
+# renderizar un borrador, que todavía está por tag
+dc render --sin-pin --manifiesto productos/mep/borradores/2026.10.0/manifiesto.json \
+  --entorno /ruta/.env
 
 # sellar la plantilla dentro del manifiesto, antes de firmar
 dc sellar    productos/mep/releases/4.7.0/manifiesto.json --escribir
@@ -85,9 +94,10 @@ de uso o falta una herramienta externa. El `1` es el que corta el pipeline.
 productos/<codigo>/
 ├── producto.yaml            metadatos, servicios y sus healthchecks
 ├── compose.plantilla.yaml   plantilla Jinja, versionada por Accusys
-└── releases/<version>/
-    ├── manifiesto.json      el contrato del release
-    └── changelog.md         lo que se le muestra al cliente
+├── releases/<version>/
+│   ├── manifiesto.json      el contrato del release
+│   └── changelog.md         lo que se le muestra al cliente
+└── borradores/<version>/    igual, pero todavía por tag: el hub no lo ofrece
 
 src/deploycenter/            el toolchain (dc)
 src/deploycenter/agente/     el agente (dc-agent)
@@ -97,6 +107,7 @@ web/                         la web del hub (conectada, o maqueta si se abre sol
 Dockerfile.hub               imagen del hub (API + web); Dockerfile es la del agente
 docker-compose.yml           hub + Postgres para desarrollo (ver .env.ejemplo)
 ejemplos/                    cliente ficticio, composes del agente y la demo del agente
+tests/datos/                 un producto ficticio (mep 4.7.0) que usan los tests
 registry/                    el registry privado: decisiones y compose de dev
 ```
 
@@ -104,6 +115,60 @@ registry/                    el registry privado: decisiones y compose de dev
 código del toolchain. Lo que sí hay que verificar antes es que el producto cumpla
 el contrato de producto (corre en compose, imágenes con digest, healthcheck por
 servicio, variables declarables, compose desde plantilla).
+
+## El estándar de MEP
+
+Sale de normalizar una instalación real (Naranja X): su `docker-compose.yml` y su
+`.env`. Son dos productos, en dos directorios del mismo host:
+
+| | `productos/mep` | `productos/mep-<banco>` |
+|---|---|---|
+| Qué es | el núcleo, igual para todos | lo propio del banco |
+| Servicios | mep-api, mep-app, mep-worker, mep-bcra (+ Redis y RabbitMQ) | mep-connector, mep-contable, mep-contable-db |
+| Directorio | `/opt/accusys/mep` | `/opt/accusys/mep-<banco>` |
+| Versión | la del release del núcleo | la suya, aparte |
+
+Los dos stacks se hablan por la red `uw2-backend`, que crea UniWeb: mep-api
+sigue llamando a `http://mep-connector`. Lo que cambia respecto de lo hecho a
+mano:
+
+- **El compose se genera.** Las versiones salen del release (por digest, con el
+  tag al lado) y no del `.env`: las `MEP_*_VERSION` dejan de usarse.
+- **Cada servicio recibe solo lo que usa.** No hay `env_file`: la clave del BCRA
+  no llega al front ni la de la base al worker.
+- **Nada del cliente queda escrito en la plantilla.** Lo que estaba en el compose
+  (el endpoint del BCRA, los endpoints y credenciales del connector, el
+  `client_secret` de Dynamics del contable) pasa al `.env`, declarado en el
+  manifiesto: si falta, el preflight frena antes de la ventana.
+- **La adopción no rompe nada.** Nombres de servicio y de contenedor, redes y
+  rutas de datos son los de hoy, y no se fija `name:`: el proyecto sigue siendo
+  el directorio. El primer despliegue reemplaza el compose hecho a mano, que
+  queda como punto de retorno.
+
+**Adopción en una instalación existente.** El núcleo va primero y el stack del
+banco inmediatamente después, en la misma ventana: el `up --remove-orphans` del
+núcleo baja el connector y el contable viejos, que ya no son parte de su
+compose. El `.env` de cada directorio se arma a partir del actual, más las
+variables nuevas de cada manifiesto.
+
+**`mep-api` aplica las migraciones al arrancar.** Un release del núcleo que cambia
+el esquema va con `db_migrations: true`: no es autoservicio y, si falla, el
+agente no revierte solo (ver *Migraciones y rollback*). El primer release del
+estándar trae las versiones que ya corren, así que no migra nada.
+
+**Del borrador al release.** Los dos releases están en `borradores/` porque las
+imágenes de Docker Hub son privadas y el digest se resuelve con credenciales:
+
+```bash
+docker login -u <usuario-de-solo-lectura>
+dc pinear   productos/mep/borradores/2026.10.0/manifiesto.json --escribir
+dc promover productos/mep/borradores/2026.10.0/manifiesto.json
+dc firmar   productos/mep/releases/2026.10.0/manifiesto.json --clave cosign.key
+```
+
+Cada banco nuevo es una carpeta `productos/mep-<banco>/` como la de Naranja X:
+su `producto.yaml` (con `repo:` cuando la imagen no se llama como el servicio) y
+su plantilla.
 
 ## Las tres reglas que sostienen todo
 
@@ -518,10 +583,13 @@ que no pasa por ahí no llega a main.
 
 ### Para cerrar la Fase 0
 
-- [ ] **Relevar los compose reales de los 16 clientes de MEP.** Es el pendiente
-      número uno del documento de arquitectura y el que puede mover el plazo:
-      `productos/mep/producto.yaml` tiene hoy un inventario de servicios que es
-      un punto de partida, no un dato confirmado.
+- [x] Estándar de MEP a partir de una instalación real (Naranja X): núcleo y
+      stack del banco, en borrador
+- [ ] **Relevar el resto de los clientes de MEP** contra el estándar: cada banco
+      suma su `productos/mep-<banco>/`, y lo que no entre en el núcleo se discute
+      antes de agregarlo
+- [ ] Pinear y promover los borradores 2026.10.0 (hace falta el usuario de solo
+      lectura de Docker Hub)
 - [ ] Levantar el registry privado (ver `registry/README.md`)
 - [ ] Definir los dominios definitivos antes de pedirle nada a 16 áreas de seguridad
 - [ ] Decidir dónde viven las claves de cosign, y recién ahí sumar el paso de

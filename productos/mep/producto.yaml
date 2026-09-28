@@ -1,33 +1,55 @@
-# Definición del producto. Embarcar un producto nuevo es agregar una carpeta como
-# esta: no se toca código del toolchain.
+# MEP — el núcleo común a todos los bancos.
 #
-# PENDIENTE: el inventario de servicios de abajo es el punto de partida, no el dato
-# confirmado. Sale de relevar los docker-compose.yml reales de los 16 clientes de
-# MEP (pendiente 1 del documento de arquitectura). Ajustar antes del primer release
-# real.
+# Relevado del docker-compose.yml y el .env de una instalación real (Naranja X).
+# Lo que es de cada banco —su connector y su contable— no va acá: es otro
+# producto, `mep-<banco>`, con su propio stack y su propia versión (ver
+# productos/mep-naranjax). Los dos stacks se hablan por la red externa
+# uw2-backend, que crea UniWeb.
 
 codigo: mep
 nombre: MEP
-descripcion: Módulo Electrónico de Pagos
+descripcion: Mercado Electrónico de Pagos — núcleo (api, front, worker y BCRA)
 
-# Repo base en el registry privado. Cada servicio cuelga de acá.
-registry: registry.accusys.com.ar/mep
+# Docker Hub, organización de Accusys. Los clientes descargan con un usuario de
+# solo lectura: `docker login` en el host del cliente antes del primer pull.
+registry: docker.io/accusystechnology
 
-# Plantilla de compose, relativa a esta carpeta.
 plantilla: compose.plantilla.yaml
 
-# Servicios que Accusys publica como imagen. Los de terceros (base de datos,
-# proxies) van en la plantilla pero no acá: no los versionamos nosotros.
+# Servicios que publica Accusys. La clave es el nombre del repo en el registry
+# y el del servicio en el compose. Redis y RabbitMQ son de terceros: van en la
+# plantilla con tag fijo, no acá.
+#
+# Ninguno expone una URL de salud: el criterio es el healthcheck del contenedor
+# que declara la plantilla (tipo: contenedor).
 servicios:
-  api:
-    descripcion: API de MEP y conector
+  mep-api:
+    descripcion: API de MEP. Aplica las migraciones de la base al arrancar.
     healthcheck:
-      url: http://api:8080/health
-      espera: 200
-      timeout_s: 120
-  web:
+      tipo: contenedor
+      timeout_s: 300
+  mep-app:
     descripcion: Front de operación
     healthcheck:
-      url: http://web:8080/healthz
-      espera: 200
-      timeout_s: 60
+      tipo: contenedor
+      timeout_s: 180
+  mep-worker:
+    descripcion: Procesamiento asíncrono (RabbitMQ)
+    healthcheck:
+      tipo: contenedor
+      timeout_s: 120
+  mep-bcra:
+    descripcion: Conector con los servicios MEP del BCRA
+    healthcheck:
+      tipo: contenedor
+      timeout_s: 120
+
+# Lo que el stack necesita y no levanta él. El preflight abre una conexión TCP a
+# cada uno antes de desplegar, con host y puerto tomados del .env del cliente.
+dependencias:
+  - nombre: base
+    host: ${CS_SERVER}
+    puerto: ${CS_PORT}
+  - nombre: base-logs
+    host: ${CS_LOG_SERVER}
+    puerto: ${CS_LOG_PORT}

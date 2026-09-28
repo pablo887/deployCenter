@@ -14,10 +14,11 @@ class TestManifiestoValido:
     def test_el_base_pasa(self, base):
         assert problemas_con(base) == []
 
-    def test_el_release_de_ejemplo_del_repo_pasa(self, raiz):
-        ruta = raiz / "productos" / "mep" / "releases" / "4.7.0" / "manifiesto.json"
+    def test_el_release_de_ejemplo_pasa(self, raiz):
+        catalogo = raiz / "tests" / "datos" / "catalogo"
+        ruta = catalogo / "productos" / "mep" / "releases" / "4.7.0" / "manifiesto.json"
         m = mf.cargar(ruta)
-        assert problemas_con(m, raiz=raiz) == []
+        assert problemas_con(m, raiz=catalogo) == []
 
     def test_json_roto_da_error_legible(self, tmp_path):
         ruta = tmp_path / "m.json"

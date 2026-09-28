@@ -1,0 +1,253 @@
+{
+  "producto": "mep-naranjax",
+  "release": "2026.10.0",
+  "publicado": "2026-10-01",
+  "canal": "estable",
+  "imagenes": {
+    "mep-connector": "docker.io/accusystechnology/mep-connector-naranjax:1.0.31",
+    "mep-contable": "docker.io/accusystechnology/mep-contable-naranjax:1.0.13",
+    "mep-contable-db": "docker.io/accusystechnology/mep-contable:1.0.14"
+  },
+  "desde_version": "*",
+  "db_migrations": false,
+  "rollback_seguro": true,
+  "critico_seguridad": false,
+  "variables_nuevas": [
+    {
+      "nombre": "API_CLIENTES",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Endpoint de clientes del core, cifrado como ENC(...). Antes estaba escrita en el compose.",
+      "secreta": true
+    },
+    {
+      "nombre": "API_GLOBAL_ID",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Endpoint de Global ID, cifrado como ENC(...). Antes estaba escrita en el compose."
+    },
+    {
+      "nombre": "API_CBU",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Endpoint de cuentas por CBU, cifrado como ENC(...). Antes estaba escrita en el compose."
+    },
+    {
+      "nombre": "URL_AUTHORIZATION_1",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "URL de autorización del cliente OAuth 1, cifrada como ENC(...)"
+    },
+    {
+      "nombre": "CLIENT_ID_1",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "client_id del cliente OAuth 1, cifrado como ENC(...)",
+      "secreta": true
+    },
+    {
+      "nombre": "CLIENT_SECRET_1",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "client_secret del cliente OAuth 1, cifrado como ENC(...)",
+      "secreta": true
+    },
+    {
+      "nombre": "AUDIENCE_1",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "audience del cliente OAuth 1, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "URL_AUTHORIZATION_2",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "URL de autorización del cliente OAuth 2, cifrada como ENC(...)"
+    },
+    {
+      "nombre": "CLIENT_ID_2",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "client_id del cliente OAuth 2, cifrado como ENC(...)",
+      "secreta": true
+    },
+    {
+      "nombre": "CLIENT_SECRET_2",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "client_secret del cliente OAuth 2, cifrado como ENC(...)",
+      "secreta": true
+    },
+    {
+      "nombre": "AUDIENCE_2",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "audience del cliente OAuth 2, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "URL_AUTHORIZATION_3",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "URL de autorización del cliente OAuth 3, cifrada como ENC(...)"
+    },
+    {
+      "nombre": "CLIENT_ID_3",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "client_id del cliente OAuth 3, cifrado como ENC(...)",
+      "secreta": true
+    },
+    {
+      "nombre": "CLIENT_SECRET_3",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "client_secret del cliente OAuth 3, cifrado como ENC(...)",
+      "secreta": true
+    },
+    {
+      "nombre": "AUDIENCE_3",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "audience del cliente OAuth 3, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "GRANT_TYPE_1",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "grant_type del cliente OAuth 1, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "GRANT_TYPE_2",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "grant_type del cliente OAuth 2, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "SCOPE_2",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "scope del cliente OAuth 2, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "SCOPE_3",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "scope del cliente OAuth 3, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "URL_DEBITOS",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Endpoint de débitos del core, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "URL_CREDITOS",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Endpoint de créditos del core, cifrado como ENC(...)"
+    },
+    {
+      "nombre": "CACHE",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Cache del connector, cifrado como ENC(...); hoy ENC(false)"
+    },
+    {
+      "nombre": "CONTABLE_SFTP_HOST",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Host SFTP donde el contable deja los archivos"
+    },
+    {
+      "nombre": "CONTABLE_SFTP_USUARIO",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Usuario del SFTP del contable"
+    },
+    {
+      "nombre": "CONTABLE_URL_TOKEN",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "URL del token OAuth de Dynamics (login.microsoftonline.com/...)"
+    },
+    {
+      "nombre": "CONTABLE_URL_TASAS",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "URL de ExchangeRates en Dynamics"
+    },
+    {
+      "nombre": "CONTABLE_CLIENT_ID",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "client_id de la aplicación de Dynamics"
+    },
+    {
+      "nombre": "CONTABLE_CLIENT_SECRET",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "client_secret de la aplicación de Dynamics. Estaba en texto plano en el compose: conviene rotarlo al pasarlo al .env",
+      "secreta": true
+    },
+    {
+      "nombre": "CONTABLE_RESOURCE",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "resource de Dynamics (URL del ambiente)"
+    },
+    {
+      "nombre": "CS_SERVER",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Servidor SQL de MEP, el mismo que usa el núcleo"
+    },
+    {
+      "nombre": "CS_PORT",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Puerto del servidor SQL de MEP"
+    },
+    {
+      "nombre": "CS_DATABASE",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Base de MEP"
+    },
+    {
+      "nombre": "CS_USER",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Usuario de la base de MEP"
+    },
+    {
+      "nombre": "CS_PASS",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "Clave de la base de MEP",
+      "secreta": true
+    }
+  ],
+  "healthchecks": [
+    {
+      "servicio": "mep-connector",
+      "timeout_s": 120
+    },
+    {
+      "servicio": "mep-contable",
+      "timeout_s": 120
+    },
+    {
+      "servicio": "mep-contable-db",
+      "timeout_s": 180
+    }
+  ],
+  "dependencias": [
+    {
+      "nombre": "base",
+      "host": "${CS_SERVER}",
+      "puerto": "${CS_PORT}"
+    }
+  ],
+  "changelog": "productos/mep-naranjax/borradores/2026.10.0/changelog.md",
+  "plantilla_sha256": "bd0add7598dc99912c239ba553dd81512a436f8246f651a27387654c4c869787"
+}

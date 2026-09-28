@@ -1,0 +1,68 @@
+{
+  "producto": "mep",
+  "release": "2026.10.0",
+  "publicado": "2026-10-01",
+  "canal": "estable",
+  "imagenes": {
+    "mep-api": "docker.io/accusystechnology/mep-api:1.1.36",
+    "mep-app": "docker.io/accusystechnology/mep-app:1.1.35",
+    "mep-worker": "docker.io/accusystechnology/mep-worker:1.0.16",
+    "mep-bcra": "docker.io/accusystechnology/mep-bcra:1.0.30"
+  },
+  "desde_version": "*",
+  "db_migrations": false,
+  "rollback_seguro": true,
+  "critico_seguridad": false,
+  "variables_nuevas": [
+    {
+      "nombre": "BCRA_ENDPOINT",
+      "obligatoria": true,
+      "default": null,
+      "descripcion": "URL de los servicios MEP del BCRA. Antes estaba escrita en el compose; cambia entre homologación y producción, así que la define cada ambiente."
+    },
+    {
+      "nombre": "BCRA_IP_HOMOLOGACION",
+      "obligatoria": false,
+      "default": null,
+      "descripcion": "IP de serviciosmep.homologacion.bcra.sfa, solo si la red del banco no lo resuelve por DNS. Vacía, no se agrega la entrada en extra_hosts."
+    },
+    {
+      "nombre": "BCRA_IP_PRODUCCION",
+      "obligatoria": false,
+      "default": null,
+      "descripcion": "IP de serviciosmep.bcra.sfa, solo si la red del banco no lo resuelve por DNS. Vacía, no se agrega la entrada en extra_hosts."
+    }
+  ],
+  "healthchecks": [
+    {
+      "servicio": "mep-api",
+      "timeout_s": 300
+    },
+    {
+      "servicio": "mep-app",
+      "timeout_s": 180
+    },
+    {
+      "servicio": "mep-worker",
+      "timeout_s": 120
+    },
+    {
+      "servicio": "mep-bcra",
+      "timeout_s": 120
+    }
+  ],
+  "dependencias": [
+    {
+      "nombre": "base",
+      "host": "${CS_SERVER}",
+      "puerto": "${CS_PORT}"
+    },
+    {
+      "nombre": "base-logs",
+      "host": "${CS_LOG_SERVER}",
+      "puerto": "${CS_LOG_PORT}"
+    }
+  ],
+  "changelog": "productos/mep/borradores/2026.10.0/changelog.md",
+  "plantilla_sha256": "fc36cce02f3b6e6c3b6330b2e0f9e70b3371135e096ae34a78a838cecf472be0"
+}

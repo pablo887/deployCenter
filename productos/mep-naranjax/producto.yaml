@@ -1,0 +1,41 @@
+# MEP — lo que es de Naranja X: su connector con el core del banco y su contable.
+#
+# Cada banco tiene su propio producto como este (`mep-<banco>`), con su propia
+# versión. Corre en un stack aparte del núcleo (productos/mep), en otro
+# directorio del mismo host, y se habla con él por la red uw2-backend: mep-api
+# llama a http://mep-connector.
+
+codigo: mep-naranjax
+nombre: MEP · Naranja X
+descripcion: Connector y contable de MEP para Naranja X
+
+registry: docker.io/accusystechnology
+
+plantilla: compose.plantilla.yaml
+
+# La clave es el nombre del servicio en el compose (y del contenedor). `repo` es
+# el repositorio en el registry, cuando no coincide con la clave.
+servicios:
+  mep-connector:
+    repo: mep-connector-naranjax
+    descripcion: Connector con el core de Naranja X
+    healthcheck:
+      tipo: contenedor
+      timeout_s: 120
+  mep-contable:
+    repo: mep-contable-naranjax
+    descripcion: Proceso contable (SFTP y Dynamics)
+    healthcheck:
+      tipo: contenedor
+      timeout_s: 120
+  mep-contable-db:
+    repo: mep-contable
+    descripcion: API contable sobre la base de MEP
+    healthcheck:
+      tipo: contenedor
+      timeout_s: 180
+
+dependencias:
+  - nombre: base
+    host: ${CS_SERVER}
+    puerto: ${CS_PORT}

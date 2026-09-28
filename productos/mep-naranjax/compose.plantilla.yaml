@@ -1,0 +1,118 @@
+{#
+  Plantilla de lo propio de Naranja X en MEP: connector y contable.
+
+  Mismas reglas que la del núcleo: imágenes del manifiesto por digest, valores
+  del cliente con ${VARIABLE}, cada servicio con solo las variables que usa, y
+  los nombres de contenedor y rutas de datos que ya tiene la instalación.
+
+  Lo que antes estaba escrito en el compose del cliente (el client_secret de
+  Dynamics, los endpoints del banco) pasa al .env: la plantilla es la misma para
+  homologación y producción, y no lleva ningún secreto.
+#}
+# ------------------------------------------------------------------
+# GENERADO POR deployCenter — no editar a mano.
+# Producto {{ producto }} · release {{ release }}
+# Los cambios hechos acá se pierden en el próximo despliegue.
+# ------------------------------------------------------------------
+
+services:
+
+  mep-connector:
+    image: {{ imagenes['mep-connector'] }}
+    container_name: mep-connector
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/80' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    ports:
+      - "${MEP_PUERTO_CONNECTOR:-42902}:80"
+    # Los valores van cifrados como ENC(...), igual que hoy: el connector los
+    # descifra adentro. Se copian tal cual al .env.
+    environment:
+      API_CLIENTES: ${API_CLIENTES}
+      API_GLOBAL_ID: ${API_GLOBAL_ID}
+      API_CBU: ${API_CBU}
+      URL_AUTHORIZATION_1: ${URL_AUTHORIZATION_1}
+      CLIENT_ID_1: ${CLIENT_ID_1}
+      CLIENT_SECRET_1: ${CLIENT_SECRET_1}
+      GRANT_TYPE_1: ${GRANT_TYPE_1}
+      AUDIENCE_1: ${AUDIENCE_1}
+      URL_AUTHORIZATION_2: ${URL_AUTHORIZATION_2}
+      CLIENT_ID_2: ${CLIENT_ID_2}
+      CLIENT_SECRET_2: ${CLIENT_SECRET_2}
+      GRANT_TYPE_2: ${GRANT_TYPE_2}
+      AUDIENCE_2: ${AUDIENCE_2}
+      SCOPE_2: ${SCOPE_2}
+      PATH_CBU_2: ${PATH_CBU_2:-/account-data-ms/accounts?}
+      PATH_GLOBAL_ID_2: ${PATH_GLOBAL_ID_2:-/account-data-ms/customers/}
+      PATH_ACCOUN_ID_2: ${PATH_ACCOUN_ID_2:-/account-data-ms/customers/}
+      URL_AUTHORIZATION_3: ${URL_AUTHORIZATION_3}
+      CLIENT_ID_3: ${CLIENT_ID_3}
+      CLIENT_SECRET_3: ${CLIENT_SECRET_3}
+      AUDIENCE_3: ${AUDIENCE_3}
+      SCOPE_3: ${SCOPE_3}
+      URL_DEBITOS: ${URL_DEBITOS}
+      URL_CREDITOS: ${URL_CREDITOS}
+      CACHE: ${CACHE}
+    networks:
+      - uw2-backend
+
+  mep-contable:
+    image: {{ imagenes['mep-contable'] }}
+    container_name: mep-contable
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    volumes:
+      - ${MEP_DATOS:-../../data/apps/mep}/contable:/app/contable
+      - ${MEP_DATOS:-../../data/apps/mep}/contable/FilesCsv:/app/contable/FilesCsv
+      - ${MEP_DATOS:-../../data/apps/mep}/certificates:/app/contable/certificates
+    environment:
+      time: ${CONTABLE_INTERVALO_MS:-1000}
+      Hour: ${CONTABLE_HORA:-16}
+      Minute: ${CONTABLE_MINUTO:-00}
+      Second: ${CONTABLE_SEGUNDO:-00}
+      DbConnectionString: "Server=${CS_SERVER},${CS_PORT};Database=${CS_DATABASE};User ID=${CS_USER};Password=${CS_PASS};MultipleActiveResultSets=True"
+      zipPath: /app/contable
+      csvPath: /app/contable/FilesCsv
+      host: ${CONTABLE_SFTP_HOST}
+      username: ${CONTABLE_SFTP_USUARIO}
+      cert: /app/contable/certificates/${CONTABLE_SFTP_CERTIFICADO:-mep-user.pem}
+      urlToken: ${CONTABLE_URL_TOKEN}
+      urlRate: ${CONTABLE_URL_TASAS}
+      grant_type: client_credentials
+      client_id: ${CONTABLE_CLIENT_ID}
+      client_secret: ${CONTABLE_CLIENT_SECRET}
+      resource: ${CONTABLE_RESOURCE}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    networks:
+      - uw2-backend
+
+  mep-contable-db:
+    image: {{ imagenes['mep-contable-db'] }}
+    container_name: mep-contable-db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/80' || exit 1"]
+      interval: 2s
+      timeout: 2s
+      start_period: 20s
+      retries: 5
+    ports:
+      - "${MEP_PUERTO_CONTABLE:-42914}:80"
+    environment:
+      DbConnectionString: "Server=${CS_SERVER},${CS_PORT};Database=${CS_DATABASE};User ID=${CS_USER};Password=${CS_PASS};MultipleActiveResultSets=True;TrustServerCertificate=True"
+    networks:
+      - uw2-backend
+
+networks:
+  uw2-backend:
+    name: uw2-backend
+    external: true

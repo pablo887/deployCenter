@@ -101,15 +101,16 @@ class TestGenerar:
         assert not salida.exists()
 
 
-class TestPlantillaRealDeMep:
-    """La plantilla que se versiona en el repo tiene que renderizar y pasar la
-    verificación con el release de ejemplo."""
+class TestPlantillaDeEjemplo:
+    """La plantilla de los datos de prueba tiene que renderizar y pasar la
+    verificación con su release."""
 
     def test_renderiza_y_verifica(self, raiz):
         from deploycenter import manifiesto as mf
 
-        m = mf.cargar(raiz / "productos" / "mep" / "releases" / "4.7.0" / "manifiesto.json")
-        plantilla = raiz / "productos" / "mep" / "compose.plantilla.yaml"
+        prod = raiz / "tests" / "datos" / "catalogo" / "productos" / "mep"
+        m = mf.cargar(prod / "releases" / "4.7.0" / "manifiesto.json")
+        plantilla = prod / "compose.plantilla.yaml"
         texto = compose.render_desde_archivos(plantilla, m, entorno={"MEP_EXPONER_EN": "127.0.0.1"})
 
         assert compose.problemas_del_compose(texto, manifiesto=m) == []

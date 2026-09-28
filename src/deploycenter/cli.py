@@ -7,6 +7,7 @@
     dc firmar     productos/mep/releases/4.7.0/manifiesto.json --clave cosign.key
     dc verificar  productos/mep/releases/4.7.0/manifiesto.json --clave-publica cosign.pub
     dc sellar     productos/mep/releases/4.7.0/manifiesto.json --escribir
+    dc promover   productos/mep/borradores/2026.10.0/manifiesto.json
     dc nuevo-release --producto mep --version 4.7.1 --desde '>=4.5.0'
     dc schema
 
@@ -190,7 +191,8 @@ def cmd_render(args):
         nombres = ", ".join(v["nombre"] for v in faltan)
         raise ErrorValidacion([f"faltan variables obligatorias sin default: {nombres}"])
 
-    texto = compose.generar(ruta_p, m, entorno=entorno, salida=args.salida)
+    texto = compose.generar(ruta_p, m, entorno=entorno, salida=args.salida,
+                            exigir_pin=not args.sin_pin)
     if args.salida:
         print(f"{verde}{s['ok']}{fin} {args.salida}")
         print(f"  {gris}desde {ruta_p.name} + {m['producto']} {m['release']}{fin}")
@@ -225,6 +227,41 @@ def cmd_verificar(args):
         return OK
     print(f"{rojo}{s['mal']}{fin} firma inválida para {ruta}")
     return FALLA_VALIDACION
+
+
+def cmd_promover(args):
+    """Publica un borrador: exige que esté pinneado, lo mueve a releases/ y
+    corrige la ruta del changelog. Después hay que firmarlo, como a cualquier
+    release."""
+    import shutil
+
+    verde, _rojo, _amarillo, gris, fin = _color(_usar_color(args))
+    s = simbolos()
+    raiz = Path(args.raiz) if args.raiz else raiz_por_defecto()
+    ruta = Path(args.manifiesto).resolve()
+    origen = ruta.parent
+    if origen.parent.name != "borradores":
+        raise ErrorHerramienta(f"{ruta} no está en una carpeta borradores/")
+    m = mf.cargar(ruta)
+    destino = origen.parent.parent / "releases" / origen.name
+    if destino.exists():
+        raise ErrorHerramienta(f"{destino} ya existe")
+
+    publicado = dict(m, changelog=f"productos/{m['producto']}/releases/{origen.name}/changelog.md")
+    # se valida como quedaría publicado, antes de mover nada
+    problemas = mf.validar(publicado, exigir_pin=True)
+    if problemas:
+        raise ErrorValidacion(problemas)
+
+    shutil.move(str(origen), str(destino))
+    mf.guardar(publicado, destino / "manifiesto.json")
+    faltan = mf.validar(publicado, raiz=raiz, exigir_pin=True)
+    if faltan:  # pragma: no cover - solo si el changelog no se movió con la carpeta
+        raise ErrorValidacion(faltan)
+
+    print(f"{verde}{s['ok']}{fin} {destino}")
+    print(f"  {gris}falta firmarlo: dc firmar {destino / 'manifiesto.json'} --clave ...{fin}")
+    return OK
 
 
 def cmd_sellar(args):
@@ -328,8 +365,10 @@ def cmd_nuevo_release(args):
     imagenes, checks = {}, []
     for servicio, cfg in servicios_producto.items():
         # cada servicio puede ir con su propio tag (MEP versiona cada microservicio
-        # por separado); sin --tag, el de la versión del release
-        imagenes[servicio] = f"{base_registry}/{servicio}:{tags.get(servicio, args.version)}"
+        # por separado); sin --tag, el de la versión del release. El repo es el
+        # nombre del servicio salvo que producto.yaml diga otro.
+        repo = (cfg or {}).get("repo", servicio)
+        imagenes[servicio] = f"{base_registry}/{repo}:{tags.get(servicio, args.version)}"
         hc = (cfg or {}).get("healthcheck") or {}
         check = {"servicio": servicio}
         if hc.get("tipo") != "contenedor":
@@ -338,6 +377,10 @@ def cmd_nuevo_release(args):
             check["espera"] = hc.get("espera", 200)
         check["timeout_s"] = hc.get("timeout_s", 120)
         checks.append(check)
+
+    # un borrador todavía no se publica: el hub no lo ofrece y el pipeline no le
+    # exige digests. Se promueve moviendo la carpeta a releases/ después de pinear.
+    carpeta_tipo = "borradores" if args.borrador else "releases"
 
     nuevo = {
         "producto": args.producto,
@@ -352,12 +395,12 @@ def cmd_nuevo_release(args):
         "variables_nuevas": [],
         "healthchecks": checks,
         "dependencias": list(producto.get("dependencias") or []),
-        "changelog": f"productos/{args.producto}/releases/{args.version}/changelog.md",
+        "changelog": f"productos/{args.producto}/{carpeta_tipo}/{args.version}/changelog.md",
         "plantilla_sha256": compose.huella(
             ruta_plantilla(raiz, args.producto, producto).read_bytes()),
     }
 
-    carpeta = raiz / "productos" / args.producto / "releases" / args.version
+    carpeta = raiz / "productos" / args.producto / carpeta_tipo / args.version
     if carpeta.exists() and not args.sobrescribir:
         raise ErrorHerramienta(f"{carpeta} ya existe; usá --sobrescribir si es a propósito")
     carpeta.mkdir(parents=True, exist_ok=True)
@@ -422,6 +465,8 @@ def construir_parser():
     r.add_argument("--entorno", help="archivo .env del cliente")
     r.add_argument("--salida", help="si no se indica, va a stdout")
     r.add_argument("--forzar", action="store_true", help="renderizar aunque falten variables")
+    r.add_argument("--sin-pin", action="store_true",
+                   help="para un borrador: no exige que las imágenes estén por digest")
     r.set_defaults(func=cmd_render)
 
     f = sub.add_parser("firmar", help="firma el manifiesto con cosign")
@@ -445,6 +490,8 @@ def construir_parser():
     n.add_argument("--con-migraciones", action="store_true")
     n.add_argument("--tag", action="append", metavar="SERVICIO=TAG",
                    help="tag de un servicio en particular; se puede repetir")
+    n.add_argument("--borrador", action="store_true",
+                   help="lo crea en borradores/: no se publica hasta pinearlo y moverlo")
     n.add_argument("--sobrescribir", action="store_true")
     n.set_defaults(func=cmd_nuevo_release)
 
@@ -454,6 +501,11 @@ def construir_parser():
     emp.add_argument("--release", required=True)
     emp.add_argument("--salida", required=True, help="directorio destino del paquete")
     emp.set_defaults(func=cmd_empaquetar)
+
+    pr = sub.add_parser("promover",
+                        help="publica un borrador ya pinneado: lo mueve a releases/")
+    pr.add_argument("manifiesto")
+    pr.set_defaults(func=cmd_promover)
 
     se = sub.add_parser("sellar",
                         help="escribe en el manifiesto la huella de la plantilla, antes de firmar")

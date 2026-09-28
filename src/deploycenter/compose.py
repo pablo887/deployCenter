@@ -79,8 +79,10 @@ def render_desde_archivos(ruta_plantilla, manifiesto, entorno=None, extra=None):
     return render(texto, manifiesto, entorno=entorno, extra=extra)
 
 
-def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
-    """Revisa el compose generado antes de dárselo a nadie."""
+def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO, exigir_pin=True):
+    """Revisa el compose generado antes de dárselo a nadie. `exigir_pin=False`
+    es para mirar un borrador antes de pinearlo: `latest` y `build` siguen
+    fallando."""
     p = []
     try:
         datos = yaml.safe_load(texto)
@@ -117,11 +119,12 @@ def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
             continue
         if digests.usa_latest(imagen):
             p.append(f"services/{nombre}: usa el tag 'latest'")
-        elif (imagen.startswith(registry) or digests.separar(imagen)[0] in propios) \
+        elif exigir_pin \
+                and (imagen.startswith(registry) or digests.separar(imagen)[0] in propios) \
                 and not digests.esta_pinneado(imagen):
             p.append(
-                f"services/{nombre}: la imagen {imagen!r} es del registry propio y "
-                f"no está pinneada por digest"
+                f"services/{nombre}: la imagen {imagen!r} es de Accusys y no está "
+                f"pinneada por digest"
             )
 
     if manifiesto is not None:
@@ -136,11 +139,13 @@ def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
     return p
 
 
-def generar(ruta_plantilla, manifiesto, entorno=None, salida=None, verificar=True):
+def generar(ruta_plantilla, manifiesto, entorno=None, salida=None, verificar=True,
+            exigir_pin=True):
     """Renderiza, verifica y opcionalmente escribe el compose."""
     texto = render_desde_archivos(ruta_plantilla, manifiesto, entorno=entorno)
     if verificar:
-        problemas = problemas_del_compose(texto, manifiesto=manifiesto)
+        problemas = problemas_del_compose(texto, manifiesto=manifiesto,
+                                          exigir_pin=exigir_pin)
         if problemas:
             raise ErrorValidacion(problemas)
     if salida is not None:

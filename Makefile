@@ -15,16 +15,25 @@ lint:
 validar: test
 
 # Circuito completo contra el cliente de ejemplo, sin tocar nada real.
+# Es el estándar de MEP (todavía en borrador, por tag): el núcleo y el stack de
+# un banco, cada uno en su directorio, como van en el servidor del cliente.
+MEP_BORRADOR := productos/mep/borradores/2026.10.0/manifiesto.json
+BANCO_BORRADOR := productos/mep-naranjax/borradores/2026.10.0/manifiesto.json
+
 demo:
-	@mkdir -p .demo
-	@cp ejemplos/cliente-demo/.env.ejemplo .demo/.env
-	$(PY) -m deploycenter.cli validar productos/mep/releases/4.7.0/manifiesto.json
-	$(PY) -m deploycenter.cli variables productos/mep/releases/4.7.0/manifiesto.json --entorno .demo/.env
-	$(PY) -m deploycenter.cli render --producto mep --release 4.7.0 \
-		--entorno .demo/.env --salida .demo/docker-compose.yml
+	@mkdir -p .demo/mep .demo/mep-naranjax
+	@cp ejemplos/cliente-demo/.env.ejemplo .demo/mep/.env
+	@cp ejemplos/cliente-demo/.env.banco.ejemplo .demo/mep-naranjax/.env
+	$(PY) -m deploycenter.cli validar --sin-pin $(MEP_BORRADOR)
+	$(PY) -m deploycenter.cli variables $(MEP_BORRADOR) --entorno .demo/mep/.env
+	$(PY) -m deploycenter.cli render --sin-pin --manifiesto $(MEP_BORRADOR) \
+		--entorno .demo/mep/.env --salida .demo/mep/docker-compose.yml
+	$(PY) -m deploycenter.cli validar --sin-pin $(BANCO_BORRADOR)
+	$(PY) -m deploycenter.cli render --sin-pin --manifiesto $(BANCO_BORRADOR) \
+		--entorno .demo/mep-naranjax/.env --salida .demo/mep-naranjax/docker-compose.yml
 	@echo
-	@echo "compose generado en .demo/docker-compose.yml"
-	@cd .demo && docker compose config --quiet && echo "docker compose lo acepta"
+	@cd .demo/mep && docker compose config --quiet && echo "docker compose acepta el núcleo"
+	@cd .demo/mep-naranjax && docker compose config --quiet && echo "docker compose acepta el stack del banco"
 
 limpiar:
 	rm -rf .demo .pytest_cache .ruff_cache
