@@ -313,16 +313,31 @@ def cmd_nuevo_release(args):
     producto = cargar_producto(raiz, args.producto)
     base_registry = producto.get("registry", f"registry.accusys.com.ar/{args.producto}")
 
+    tags = {}
+    for par in args.tag or []:
+        servicio, sep, valor = par.partition("=")
+        if not sep or not servicio or not valor:
+            raise ErrorHerramienta(f"--tag espera SERVICIO=TAG, llegó {par!r}")
+        tags[servicio] = valor
+    servicios_producto = producto.get("servicios") or {}
+    ajenos = sorted(set(tags) - set(servicios_producto))
+    if ajenos:
+        raise ErrorHerramienta(
+            f"--tag para servicios que {args.producto} no declara: {', '.join(ajenos)}")
+
     imagenes, checks = {}, []
-    for servicio, cfg in (producto.get("servicios") or {}).items():
-        imagenes[servicio] = f"{base_registry}/{servicio}:{args.version}"
+    for servicio, cfg in servicios_producto.items():
+        # cada servicio puede ir con su propio tag (MEP versiona cada microservicio
+        # por separado); sin --tag, el de la versión del release
+        imagenes[servicio] = f"{base_registry}/{servicio}:{tags.get(servicio, args.version)}"
         hc = (cfg or {}).get("healthcheck") or {}
-        checks.append({
-            "servicio": servicio,
-            "url": hc.get("url", f"http://{servicio}:8080/health"),
-            "espera": hc.get("espera", 200),
-            "timeout_s": hc.get("timeout_s", 120),
-        })
+        check = {"servicio": servicio}
+        if hc.get("tipo") != "contenedor":
+            # sin tipo se asume el esquema de siempre: una URL de salud
+            check["url"] = hc.get("url", f"http://{servicio}:8080/health")
+            check["espera"] = hc.get("espera", 200)
+        check["timeout_s"] = hc.get("timeout_s", 120)
+        checks.append(check)
 
     nuevo = {
         "producto": args.producto,
@@ -336,6 +351,7 @@ def cmd_nuevo_release(args):
         "critico_seguridad": False,
         "variables_nuevas": [],
         "healthchecks": checks,
+        "dependencias": list(producto.get("dependencias") or []),
         "changelog": f"productos/{args.producto}/releases/{args.version}/changelog.md",
         "plantilla_sha256": compose.huella(
             ruta_plantilla(raiz, args.producto, producto).read_bytes()),
@@ -427,6 +443,8 @@ def construir_parser():
     n.add_argument("--canal", default="estable", choices=["estable", "anticipado"])
     n.add_argument("--fecha", help="fecha de publicación (por defecto, hoy)")
     n.add_argument("--con-migraciones", action="store_true")
+    n.add_argument("--tag", action="append", metavar="SERVICIO=TAG",
+                   help="tag de un servicio en particular; se puede repetir")
     n.add_argument("--sobrescribir", action="store_true")
     n.set_defaults(func=cmd_nuevo_release)
 

@@ -62,6 +62,9 @@ dc render --producto mep --release 4.7.0 --entorno /ruta/.env --salida docker-co
 # esqueleto de un release nuevo
 dc nuevo-release --producto mep --version 4.7.1 --desde '>=4.5.0'
 
+# con un tag distinto por servicio (MEP versiona cada microservicio aparte)
+dc nuevo-release --producto mep --version 4.7.1 --tag api=1.1.36 --tag web=1.1.35
+
 # sellar la plantilla dentro del manifiesto, antes de firmar
 dc sellar    productos/mep/releases/4.7.0/manifiesto.json --escribir
 
@@ -107,11 +110,18 @@ servicio, variables declarables, compose desde plantilla).
 **Las imágenes van por digest, nunca por tag.** Volver a `api:4.6.0` es volver a
 un nombre que pudo haber sido reescrito. Volver a `api@sha256:...` es volver al
 mismo binario. Sin esto el rollback es una promesa que no se puede cumplir, y por
-eso `dc validar` lo exige para publicar.
+eso `dc validar` lo exige para publicar. `dc pinear` conserva el tag al lado del
+digest (`api:1.1.36@sha256:...`): Docker descarga por el digest e ignora el tag,
+que queda para que una persona sepa qué versión es. La plantilla lo recibe en
+`tags`, para los productos que muestran la versión de cada servicio.
 
 **Todo servicio publicado por Accusys tiene healthcheck.** Es el criterio objetivo
 de éxito del despliegue y lo que dispara el rollback automático. Un release sin
-healthchecks no se puede verificar, así que no se puede revertir solo.
+healthchecks no se puede verificar, así que no se puede revertir solo. Hay dos
+formas: con `url`, el agente además pide esa URL y espera el código; sin `url`
+(en `producto.yaml`, `tipo: contenedor`), el criterio es el healthcheck que el
+compose le declara al contenedor. MEP va por la segunda: sus servicios exponen
+un puerto, no una URL de salud.
 
 **Los valores del cliente no salen del servidor del cliente.** El manifiesto
 declara los *nombres* de las variables; los valores viven en el `.env` del host.
@@ -187,10 +197,25 @@ nuevo se prepara aparte y las imágenes se descargan apuntando ahí.
 | variables | sí | las obligatorias sin default, antes de la ventana |
 | espacio | sí | antes de descargar, no a mitad |
 | estado_actual | no | si el stack ya estaba caído, conviene saberlo antes |
+| dependencia:* | según el manifiesto | la base externa, un IdP, un gateway: que respondan por TCP |
 | compose | sí | que el archivo generado sea válido |
+| redes | sí | que existan las redes `external` del compose, que crea otro stack |
 | descarga | sí | pull anticipado y verificación de que quedó el digest exacto |
 
 Si esto pasa, la ventana dura minutos: lo lento y lo falible ya ocurrió.
+
+Las dependencias se declaran en el manifiesto (y en `producto.yaml`, de donde
+las copia `dc nuevo-release`) con `${VARIABLE}` del `.env` del cliente:
+
+```json
+"dependencias": [
+  {"nombre": "base", "host": "${CS_SERVER}", "puerto": "${CS_PORT}"},
+  {"nombre": "gateway", "host": "wso2am", "puerto": "8280", "bloqueante": false}
+]
+```
+
+El agente las resuelve en el servidor del cliente y el informe nombra la
+variable, no el valor: a qué host apunta la base no sale del servidor.
 
 ### Qué pasa cuando falla
 

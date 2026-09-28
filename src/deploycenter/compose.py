@@ -52,10 +52,14 @@ def _entorno_jinja():
 
 def render(plantilla_texto, manifiesto, entorno=None, extra=None):
     """Renderiza la plantilla. Devuelve el texto del compose."""
+    imagenes = dict(manifiesto.get("imagenes") or {})
     contexto = {
         "producto": manifiesto.get("producto"),
         "release": manifiesto.get("release"),
-        "imagenes": dict(manifiesto.get("imagenes") or {}),
+        "imagenes": imagenes,
+        # el tag de cada imagen, para lo que la muestra (el front de MEP expone la
+        # versión de cada servicio); None si la referencia no trae tag
+        "tags": {s: digests.tag_de(ref) for s, ref in imagenes.items()},
         "env": dict(entorno or {}),
     }
     if extra:
@@ -90,6 +94,13 @@ def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
     if not isinstance(servicios, dict) or not servicios:
         return ["el compose generado no declara services"]
 
+    # los repos que publica Accusys en este release: cualquier servicio que use uno
+    # de estos tiene que ir por digest, esté en el registry que esté
+    propios = set()
+    if manifiesto is not None:
+        propios = {digests.separar(ref)[0]
+                   for ref in (manifiesto.get("imagenes") or {}).values()}
+
     for nombre, definicion in sorted(servicios.items()):
         if not isinstance(definicion, dict):
             p.append(f"services/{nombre}: definición inválida")
@@ -106,7 +117,8 @@ def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
             continue
         if digests.usa_latest(imagen):
             p.append(f"services/{nombre}: usa el tag 'latest'")
-        elif imagen.startswith(registry) and not digests.esta_pinneado(imagen):
+        elif (imagen.startswith(registry) or digests.separar(imagen)[0] in propios) \
+                and not digests.esta_pinneado(imagen):
             p.append(
                 f"services/{nombre}: la imagen {imagen!r} es del registry propio y "
                 f"no está pinneada por digest"

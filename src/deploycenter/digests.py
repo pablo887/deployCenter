@@ -38,6 +38,7 @@ def ejecutar_real(comando, timeout=120):
 def separar(referencia):
     """'reg/ns/api:1.2.3' -> ('reg/ns/api', '1.2.3', None)
     'reg/ns/api@sha256:ab..' -> ('reg/ns/api', None, 'sha256:ab..')
+    'reg/ns/api:1.2.3@sha256:ab..' -> ('reg/ns/api', '1.2.3', 'sha256:ab..')
 
     Tiene en cuenta que el host del registry puede traer puerto (``host:5000/api``),
     que es el caso donde un split ingenuo por ':' se equivoca.
@@ -45,14 +46,18 @@ def separar(referencia):
     ref = (referencia or "").strip()
     if not ref:
         raise ValueError("referencia de imagen vacía")
-    if "@" in ref:
-        repo, _, digest = ref.partition("@")
-        return repo, None, digest
+    nombre, _, digest = ref.partition("@")
     # el tag es lo que va después del último ':' siempre que no haya '/' después
-    corte = ref.rfind(":")
-    if corte > 0 and "/" not in ref[corte:]:
-        return ref[:corte], ref[corte + 1:], None
-    return ref, None, None
+    corte = nombre.rfind(":")
+    if corte > 0 and "/" not in nombre[corte:]:
+        return nombre[:corte], nombre[corte + 1:], digest or None
+    return nombre, None, digest or None
+
+
+def tag_de(referencia):
+    """El tag legible de la referencia, si lo tiene. Con ``repo:tag@digest`` el
+    digest manda al descargar y el tag queda para mostrar qué versión es."""
+    return separar(referencia)[1]
 
 
 def esta_pinneado(referencia):
@@ -97,7 +102,10 @@ def herramienta_disponible():
 
 
 def resolver(referencia, ejecutar=None, herramienta=None):
-    """Devuelve la referencia pinneada por digest.
+    """Devuelve la referencia pinneada por digest, conservando el tag:
+    ``repo:1.2.3`` -> ``repo:1.2.3@sha256:...``. Docker descarga por el digest e
+    ignora el tag, así que el binario sigue siendo exacto; el tag queda para que
+    una persona (y el front del producto) sepa qué versión es.
 
     Si ya venía pinneada la devuelve tal cual: resolver es idempotente y correrlo
     de nuevo sobre un manifiesto ya publicado no lo cambia.
@@ -126,7 +134,7 @@ def resolver(referencia, ejecutar=None, herramienta=None):
         raise ErrorHerramienta(
             f"no se pudo resolver el digest de {referencia!r}: {problema}"
         )
-    return f"{repo}@{digest}"
+    return f"{repo}:{tag}@{digest}"
 
 
 def pinear_manifiesto(manifiesto, ejecutar=None, herramienta=None):

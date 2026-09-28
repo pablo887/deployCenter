@@ -179,3 +179,103 @@ class TestInforme:
     def test_resumen_es_serializable(self, docker_falso, instalacion, paquete):
         informe, _ = Preflight(docker_falso, instalacion, paquete).correr()
         assert json.loads(json.dumps(informe.resumen()))["ok"] is True
+
+
+PLANTILLA_CON_RED_EXTERNA = """name: mep
+services:
+  api:
+    image: {{ imagenes.api }}
+    networks: [interna, compartida]
+  web:
+    image: {{ imagenes.web }}
+networks:
+  interna: {}
+  compartida:
+    name: uw2-backend
+    external: true
+"""
+
+
+class TestRedesExternas:
+    def test_si_la_plantilla_no_usa_redes_externas_no_pregunta(self, docker_falso,
+                                                               instalacion, paquete):
+        informe, _ = Preflight(docker_falso, instalacion, paquete).correr()
+        assert not [c for c in informe.comprobaciones if c.nombre == "redes"]
+        assert docker_falso.veces("red") == 0
+
+    def test_red_externa_presente(self, docker_falso, instalacion, paquete):
+        paquete.ruta_plantilla.write_text(PLANTILLA_CON_RED_EXTERNA, encoding="utf-8")
+        docker_falso.redes = {"uw2-backend"}
+        informe, _ = Preflight(docker_falso, instalacion, paquete).correr()
+        c = comprobacion(informe, "redes")
+        assert c.ok and "uw2-backend" in c.detalle
+        # se pregunta por el nombre real de la red, no por la clave del compose
+        assert ("red", "uw2-backend") in docker_falso.llamadas
+
+    def test_red_externa_ausente_bloquea_antes_de_descargar(self, docker_falso,
+                                                            instalacion, paquete):
+        paquete.ruta_plantilla.write_text(PLANTILLA_CON_RED_EXTERNA, encoding="utf-8")
+        informe, _ = Preflight(docker_falso, instalacion, paquete).correr()
+        c = comprobacion(informe, "redes")
+        assert not c.ok and c.bloqueante
+        assert "uw2-backend" in c.detalle
+        assert docker_falso.veces("pull") == 0
+
+
+class TestDependencias:
+    def _con_dependencias(self, paquete, base, dependencias):
+        base["dependencias"] = dependencias
+        paquete.ruta_manifiesto.write_text(json.dumps(base), encoding="utf-8")
+
+    def _conector(self, responden):
+        llamadas = []
+
+        def conectar(host, puerto):
+            llamadas.append((host, puerto))
+            return (host, puerto) in responden, "connection refused"
+        conectar.llamadas = llamadas
+        return conectar
+
+    def test_resuelve_las_variables_contra_el_env_del_cliente(self, docker_falso, instalacion,
+                                                              paquete, base):
+        self._con_dependencias(paquete, base, [
+            {"nombre": "base", "host": "${CS_SERVER}", "puerto": "${CS_PORT}"}])
+        (instalacion.directorio / ".env").write_text(
+            "MEP_PUERTO_WEB=8443\nCS_SERVER=10.0.0.5\nCS_PORT=1433\n", encoding="utf-8")
+        conectar = self._conector({("10.0.0.5", "1433")})
+
+        informe, _ = correr(docker_falso, instalacion, paquete, conectar_tcp=conectar)
+        c = comprobacion(informe, "dependencia:base")
+        assert c.ok
+        assert conectar.llamadas == [("10.0.0.5", "1433")]
+        # el detalle nombra las variables, no el valor del cliente
+        assert "10.0.0.5" not in c.detalle and "${CS_SERVER}" in c.detalle
+
+    def test_si_no_responde_bloquea(self, docker_falso, instalacion, paquete, base):
+        self._con_dependencias(paquete, base, [
+            {"nombre": "base", "host": "db.interna", "puerto": "1433"}])
+        informe, _ = correr(docker_falso, instalacion, paquete,
+                            conectar_tcp=self._conector(set()))
+        c = comprobacion(informe, "dependencia:base")
+        assert not c.ok and c.bloqueante
+        assert not informe.ok
+        assert docker_falso.veces("pull") == 0
+
+    def test_una_no_bloqueante_solo_avisa(self, docker_falso, instalacion, paquete, base):
+        self._con_dependencias(paquete, base, [
+            {"nombre": "gateway", "host": "wso2am", "puerto": "8280", "bloqueante": False}])
+        informe, _ = correr(docker_falso, instalacion, paquete,
+                            conectar_tcp=self._conector(set()))
+        c = comprobacion(informe, "dependencia:gateway")
+        assert not c.ok and not c.bloqueante
+        assert informe.ok
+
+    def test_si_el_env_no_define_la_variable_no_intenta_conectar(self, docker_falso,
+                                                                 instalacion, paquete, base):
+        self._con_dependencias(paquete, base, [
+            {"nombre": "base", "host": "${CS_SERVER}", "puerto": "${CS_PORT}"}])
+        conectar = self._conector(set())
+        informe, _ = correr(docker_falso, instalacion, paquete, conectar_tcp=conectar)
+        c = comprobacion(informe, "dependencia:base")
+        assert not c.ok and "host ni puerto" in c.detalle
+        assert conectar.llamadas == []

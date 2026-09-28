@@ -11,7 +11,9 @@ Se mira en dos niveles, y los dos tienen que dar bien:
    `docker compose ps` y no necesita red.
 2. **El smoke test.** Las URLs que declara el manifiesto responden el código
    esperado. Esto sí necesita que el agente alcance la red del stack; cuando no
-   puede resolver el nombre, se reporta como omitido y no como éxito.
+   puede resolver el nombre, se reporta como omitido y no como éxito. Un
+   healthcheck sin URL (productos que solo exponen un puerto, como MEP) queda
+   cubierto por el primer nivel.
 
 Esto NO es monitoreo funcional. Comprueba que el sistema arrancó, no que esté
 operando bien tres horas después. Esa distinción está en el alcance del
@@ -113,6 +115,10 @@ def smoke_http(healthchecks, cliente=None):
     cliente = cliente or pedir_http
     resultados = []
     for hc in healthchecks:
+        if not hc.get("url"):
+            # sin URL el criterio es el healthcheck del contenedor, que ya se
+            # comprobó en esperar_contenedores
+            continue
         nombre = f"smoke:{hc['servicio']}"
         codigo, detalle = cliente(hc["url"], hc.get("timeout_s", 30))
         if codigo is None:

@@ -106,6 +106,7 @@ class DockerFalso:
         self.fallar_up = False
         self.fallar_pull = False
         self.imagenes_faltantes = set()
+        self.redes = set()
         # salud que queda después de cada `up`, en orden. Sirve para el caso
         # "la versión nueva no levanta pero el rollback sí".
         self.salud_tras_up = None
@@ -149,6 +150,10 @@ class DockerFalso:
 
     def espacio_libre_gb(self, directorio):
         return self.espacio
+
+    def red_existe(self, nombre):
+        self.llamadas.append(("red", nombre))
+        return nombre in self.redes
 
     # ayudas para los asserts
     def operaciones(self):

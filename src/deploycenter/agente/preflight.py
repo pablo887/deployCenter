@@ -9,12 +9,26 @@ aparte, en `.deploycenter/preparado/`, y las imágenes se descargan apuntando ah
 el stack en producción sigue igual hasta el despliegue.
 """
 
+import socket
+
+import yaml
+
 from .. import compose as compose_mod
 from .. import manifiesto as mf
 from .. import variables as vars_
 from .docker import ErrorDocker
 
 ESPACIO_MINIMO_GB = 5.0
+TIMEOUT_TCP_S = 5
+
+
+def conectar_tcp_real(host, puerto, timeout=TIMEOUT_TCP_S):
+    """Abre y cierra una conexión TCP. Devuelve (ok, detalle)."""
+    try:
+        with socket.create_connection((host, int(puerto)), timeout=timeout):
+            return True, ""
+    except (OSError, ValueError) as e:
+        return False, str(e)
 
 
 class Comprobacion:
@@ -54,12 +68,13 @@ class Informe:
 
 class Preflight:
     def __init__(self, docker, instalacion, paquete, espacio_minimo_gb=ESPACIO_MINIMO_GB,
-                 clave_publica=None):
+                 clave_publica=None, conectar_tcp=None):
         self.docker = docker
         self.instalacion = instalacion
         self.paquete = paquete
         self.espacio_minimo_gb = espacio_minimo_gb
         self.clave_publica = clave_publica
+        self.conectar_tcp = conectar_tcp or conectar_tcp_real
 
     # -- comprobaciones ----------------------------------------------------- #
 
@@ -148,6 +163,52 @@ class Preflight:
             return Comprobacion("compose", False, str(e)), None
         return Comprobacion("compose", True, f"generado en {destino.name}"), destino
 
+    def _redes_externas(self, compose_preparado):
+        """Las redes que el compose declara `external` las crea otro stack. Si no
+        están, `up` falla a mitad de camino: mejor saberlo antes."""
+        try:
+            datos = yaml.safe_load(compose_preparado.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as e:
+            return Comprobacion("redes", False, f"no se pudo leer el compose: {e}")
+        externas = sorted(
+            (cfg or {}).get("name") or clave
+            for clave, cfg in (datos.get("networks") or {}).items()
+            if isinstance(cfg, dict) and cfg.get("external"))
+        if not externas:
+            return None
+        faltan = [r for r in externas if not self.docker.red_existe(r)]
+        if faltan:
+            return Comprobacion(
+                "redes", False,
+                "no existen las redes externas: " + ", ".join(faltan)
+                + "; las crea el stack que las comparte, no este despliegue")
+        return Comprobacion("redes", True, "redes externas presentes: " + ", ".join(externas))
+
+    def _dependencias(self, manifiesto):
+        """Lo que el stack necesita y no levanta él: la base, el IdP, un gateway.
+        Los valores salen del .env del cliente y no se muestran: el detalle dice
+        qué dependencia falló, no a qué host apunta."""
+        entorno = self.instalacion.entorno()
+        comprobaciones = []
+        for d in manifiesto.get("dependencias") or []:
+            nombre = f"dependencia:{d['nombre']}"
+            bloqueante = d.get("bloqueante", True)
+            host, puerto = mf.resolver_dependencia(d, entorno)
+            if not host or not puerto:
+                faltan = [c for c, v in (("host", host), ("puerto", puerto)) if not v]
+                comprobaciones.append(Comprobacion(
+                    nombre, False,
+                    f"el .env no define {' ni '.join(faltan)} ({d['host']}:{d['puerto']})",
+                    bloqueante=bloqueante))
+                continue
+            ok, detalle = self.conectar_tcp(host, puerto)
+            comprobaciones.append(Comprobacion(
+                nombre, ok,
+                f"responde ({d['host']}:{d['puerto']})" if ok
+                else f"no responde ({d['host']}:{d['puerto']}): {detalle}",
+                bloqueante=bloqueante))
+        return comprobaciones
+
     def _descarga(self, manifiesto, compose_preparado):
         if compose_preparado is None:
             return Comprobacion("descarga", False, "no hay compose que descargar")
@@ -202,8 +263,14 @@ class Preflight:
         comprobaciones.append(self._espacio())
         comprobaciones.append(self._estado_actual(manifiesto))
 
+        comprobaciones.extend(self._dependencias(manifiesto))
+
         comp_compose, preparado = self._preparar_compose(manifiesto)
         comprobaciones.append(comp_compose)
+        if preparado is not None:
+            redes = self._redes_externas(preparado)
+            if redes is not None:
+                comprobaciones.append(redes)
 
         if descargar and comp_compose.ok and not any(
                 c for c in comprobaciones if not c.ok and c.bloqueante):

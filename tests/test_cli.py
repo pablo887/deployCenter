@@ -117,6 +117,23 @@ class TestRender:
 
 
 class TestNuevoRelease:
+    def test_tag_por_servicio(self, repo):
+        assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+                      "--version", "4.8.0", "--tag", "api=1.1.36") == OK
+        m = json.loads((repo / "productos/mep/releases/4.8.0/manifiesto.json").read_text())
+        assert m["imagenes"]["api"].endswith("/api:1.1.36")
+        assert m["imagenes"]["web"].endswith("/web:4.8.0")
+
+    def test_tag_de_un_servicio_que_no_existe(self, repo, capsys):
+        assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+                      "--version", "4.8.0", "--tag", "nada=1.0.0") == ERROR_USO
+        assert "nada" in capsys.readouterr().err
+
+    def test_tag_mal_escrito(self, repo, capsys):
+        assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+                      "--version", "4.8.0", "--tag", "api") == ERROR_USO
+        assert "SERVICIO=TAG" in capsys.readouterr().err
+
     def test_crea_manifiesto_y_changelog(self, repo, capsys):
         assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
                       "--version", "4.8.0", "--desde", ">=4.7.0") == OK

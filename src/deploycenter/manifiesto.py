@@ -13,6 +13,7 @@ en un pipeline conviene ver todo lo que hay que arreglar de una sola pasada.
 
 import datetime
 import json
+import re
 from pathlib import Path
 
 try:
@@ -24,6 +25,9 @@ from . import digests, versiones
 from .errores import ErrorArchivo, ErrorValidacion
 
 NOMBRE_SCHEMA = "manifiesto.schema.json"
+
+# una referencia a una variable del .env del cliente, como la escribe compose
+RE_VARIABLE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
 
 def ruta_schema():
@@ -130,6 +134,20 @@ def problemas_semanticos(manifiesto, raiz=None, exigir_pin=True):
             "no debería además requerir circuito asistido; separá la migración del parche"
         )
 
+    # -- dependencias externas
+    for d in manifiesto.get("dependencias") or []:
+        for campo in ("host", "puerto"):
+            valor = d.get(campo, "")
+            m = RE_VARIABLE.fullmatch(valor)
+            if "${" in valor and not m:
+                p.append(f"dependencias/{d.get('nombre')}/{campo}: {valor!r} no es "
+                         f"una sola ${{VARIABLE}}")
+        puerto = d.get("puerto", "")
+        if not RE_VARIABLE.fullmatch(puerto) and not (
+                puerto.isdigit() and 0 < int(puerto) < 65536):
+            p.append(f"dependencias/{d.get('nombre')}/puerto: {puerto!r} no es un "
+                     f"puerto ni una ${{VARIABLE}}")
+
     # -- variables
     nombres = [v.get("nombre") for v in manifiesto.get("variables_nuevas") or []]
     for nombre in sorted({n for n in nombres if nombres.count(n) > 1}):
@@ -186,6 +204,17 @@ def exigir_valido(manifiesto, raiz=None, exigir_pin=True):
 # --------------------------------------------------------------------------- #
 # consultas que usa el resto de la plataforma
 # --------------------------------------------------------------------------- #
+
+def resolver_dependencia(dependencia, entorno):
+    """(host, puerto) de una dependencia con las ${VARIABLE} resueltas contra el
+    .env del cliente. Lo que falte en el entorno queda en None."""
+    def valor(texto):
+        m = RE_VARIABLE.fullmatch(texto or "")
+        if m:
+            return (entorno or {}).get(m.group(1)) or None
+        return texto or None
+    return valor(dependencia.get("host")), valor(dependencia.get("puerto"))
+
 
 def servicios(manifiesto):
     return sorted((manifiesto.get("imagenes") or {}).keys())

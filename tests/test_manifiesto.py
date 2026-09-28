@@ -178,3 +178,57 @@ class TestExigirValido:
         with pytest.raises(ErrorValidacion) as e:
             mf.exigir_valido(base)
         assert e.value.problemas
+
+
+class TestHealthcheckDeContenedor:
+    """Productos como MEP no exponen una URL de salud: el criterio es el
+    healthcheck del contenedor que declara el compose."""
+
+    def test_sin_url_es_valido(self, variante):
+        m = variante(healthchecks=[{"servicio": "api", "timeout_s": 60},
+                                   {"servicio": "web", "timeout_s": 60}])
+        assert problemas_con(m) == []
+
+    def test_espera_sin_url_no_tiene_sentido(self, variante):
+        m = variante(healthchecks=[
+            {"servicio": "api", "espera": 200, "timeout_s": 60},
+            {"servicio": "web", "timeout_s": 60}])
+        assert any("url" in p for p in problemas_con(m))
+
+    def test_url_sin_espera_tampoco(self, variante):
+        m = variante(healthchecks=[
+            {"servicio": "api", "url": "http://api/health", "timeout_s": 60},
+            {"servicio": "web", "timeout_s": 60}])
+        assert any("espera" in p for p in problemas_con(m))
+
+
+class TestDependencias:
+    def test_con_variables_del_env(self, variante):
+        m = variante(dependencias=[
+            {"nombre": "base", "host": "${CS_SERVER}", "puerto": "${CS_PORT}"}])
+        assert problemas_con(m) == []
+
+    def test_con_valores_fijos(self, variante):
+        m = variante(dependencias=[
+            {"nombre": "gateway", "host": "wso2am", "puerto": "8280", "bloqueante": False}])
+        assert problemas_con(m) == []
+
+    def test_puerto_que_no_es_puerto(self, variante):
+        m = variante(dependencias=[{"nombre": "base", "host": "db", "puerto": "http"}])
+        assert any("puerto" in p for p in problemas_con(m))
+
+    def test_puerto_fuera_de_rango(self, variante):
+        m = variante(dependencias=[{"nombre": "base", "host": "db", "puerto": "70000"}])
+        assert any("puerto" in p for p in problemas_con(m))
+
+    def test_variable_mezclada_con_texto(self, variante):
+        m = variante(dependencias=[
+            {"nombre": "base", "host": "db-${AMBIENTE}", "puerto": "1433"}])
+        assert any("una sola" in p for p in problemas_con(m))
+
+    def test_resolver_contra_el_entorno(self):
+        d = {"nombre": "base", "host": "${CS_SERVER}", "puerto": "1433"}
+        assert mf.resolver_dependencia(d, {"CS_SERVER": "10.0.0.5"}) == ("10.0.0.5", "1433")
+        assert mf.resolver_dependencia(d, {}) == (None, "1433")
+        # una variable vacía en el .env cuenta como que falta
+        assert mf.resolver_dependencia(d, {"CS_SERVER": ""}) == (None, "1433")
