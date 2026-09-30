@@ -350,3 +350,72 @@ class TestMigraciones:
         sobran = set(en_la_base) - {t.name for t in m.Base.metadata.sorted_tables} \
             - {"dc_migraciones"}
         assert not sobran, f"tablas en las migraciones sin mapeo: {sobran}"
+
+
+class TestLlavesYSolicitudes:
+    """El enrolamiento al revés: la llave es de Accusys y el pedido lo resuelve
+    Soporte. El cliente ve qué servidores de él quieren entrar, nada más."""
+
+    @pytest.fixture
+    def semilla(self, db):
+        with db.begin() as c:
+            for t in ("andino", "litoral"):
+                llave_id = c.execute(text(
+                    "insert into llaves_enrolamiento (tenant_id, nombre, prefijo, hash, creada)"
+                    " values (:t, 'producción', 'DCK-ABCD', :h, :ahora) returning id"),
+                    {"t": t, "h": ("k" * 60) + t[:4], "ahora": AHORA}).scalar()
+                c.execute(text(
+                    "insert into solicitudes_agente (id, tenant_id, llave_id, host, ambiente,"
+                    " secreto_hash, creada) values (:s, :t, :l, :h, 'produccion', :sh, :ahora)"),
+                    {"s": f"sol-{t}", "t": t, "l": llave_id, "h": f"srv-nuevo-{t}",
+                     "sh": ("s" * 60) + t[:4], "ahora": AHORA})
+        return db
+
+    def test_los_hashes_no_se_leen(self, semilla):
+        with como(semilla, "soporte") as c:
+            falla(c, "select hash from llaves_enrolamiento")
+            falla(c, "select secreto_hash from solicitudes_agente")
+            assert ids(c, "llaves_enrolamiento", "prefijo") == ["DCK-ABCD", "DCK-ABCD"]
+
+    def test_el_cliente_no_ve_llaves(self, semilla):
+        with como(semilla, "aprobador_andino") as c:
+            assert ids(c, "llaves_enrolamiento") == []
+
+    def test_el_cliente_ve_sus_pedidos(self, semilla):
+        with como(semilla, "operador_andino") as c:
+            assert ids(c, "solicitudes_agente") == ["sol-andino"]
+        with como(semilla, "soporte") as c:
+            assert ids(c, "solicitudes_agente") == ["sol-andino", "sol-litoral"]
+
+    def test_solo_soporte_acepta(self, semilla):
+        aceptar = ("update solicitudes_agente set estado = 'aceptada', resuelta = now()"
+                   " where id = 'sol-andino'")
+        with como(semilla, "aprobador_andino") as c:
+            assert c.execute(text(aceptar)).rowcount == 0
+        with como(semilla, "soporte") as c:
+            assert c.execute(text(aceptar)).rowcount == 1
+
+    def test_soporte_no_puede_marcarlo_conectado(self, semilla):
+        """El agente y su token los crea el hub con el secreto del pedido; desde la
+        web solo se acepta o se rechaza."""
+        with como(semilla, "soporte") as c:
+            falla(c, "update solicitudes_agente set estado = 'conectada' where id = 'sol-andino'")
+            falla(c, "update solicitudes_agente set agente_id = 'ag-x' where id = 'sol-andino'")
+
+    def test_lo_resuelto_no_se_vuelve_a_resolver(self, semilla):
+        with semilla.begin() as c:
+            c.execute(text("update solicitudes_agente set estado = 'rechazada'"
+                           " where id = 'sol-andino'"))
+        with como(semilla, "soporte") as c:
+            assert c.execute(text("update solicitudes_agente set estado = 'aceptada'"
+                                  " where id = 'sol-andino'")).rowcount == 0
+
+    def test_solo_soporte_genera_y_revoca_llaves(self, semilla):
+        insertar = ("insert into llaves_enrolamiento (tenant_id, nombre, prefijo, hash, creada)"
+                    " values ('andino', 'x', 'DCK-X', :h, now())")
+        with como(semilla, "comercial") as c:
+            falla(c, insertar, {"h": "z" * 64})
+        with como(semilla, "soporte") as c:
+            c.execute(text(insertar), {"h": "z" * 64})
+            assert c.execute(text("update llaves_enrolamiento set revocada = now()"
+                                  " where tenant_id = 'andino'")).rowcount == 2

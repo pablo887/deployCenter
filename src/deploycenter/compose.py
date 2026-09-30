@@ -52,10 +52,14 @@ def _entorno_jinja():
 
 def render(plantilla_texto, manifiesto, entorno=None, extra=None):
     """Renderiza la plantilla. Devuelve el texto del compose."""
+    imagenes = dict(manifiesto.get("imagenes") or {})
     contexto = {
         "producto": manifiesto.get("producto"),
         "release": manifiesto.get("release"),
-        "imagenes": dict(manifiesto.get("imagenes") or {}),
+        "imagenes": imagenes,
+        # el tag de cada imagen, para lo que la muestra (el front de MEP expone la
+        # versión de cada servicio); None si la referencia no trae tag
+        "tags": {s: digests.tag_de(ref) for s, ref in imagenes.items()},
         "env": dict(entorno or {}),
     }
     if extra:
@@ -75,8 +79,10 @@ def render_desde_archivos(ruta_plantilla, manifiesto, entorno=None, extra=None):
     return render(texto, manifiesto, entorno=entorno, extra=extra)
 
 
-def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
-    """Revisa el compose generado antes de dárselo a nadie."""
+def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO, exigir_pin=True):
+    """Revisa el compose generado antes de dárselo a nadie. `exigir_pin=False`
+    es para mirar un borrador antes de pinearlo: `latest` y `build` siguen
+    fallando."""
     p = []
     try:
         datos = yaml.safe_load(texto)
@@ -89,6 +95,13 @@ def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
     servicios = datos.get("services")
     if not isinstance(servicios, dict) or not servicios:
         return ["el compose generado no declara services"]
+
+    # los repos que publica Accusys en este release: cualquier servicio que use uno
+    # de estos tiene que ir por digest, esté en el registry que esté
+    propios = set()
+    if manifiesto is not None:
+        propios = {digests.separar(ref)[0]
+                   for ref in (manifiesto.get("imagenes") or {}).values()}
 
     for nombre, definicion in sorted(servicios.items()):
         if not isinstance(definicion, dict):
@@ -106,10 +119,12 @@ def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
             continue
         if digests.usa_latest(imagen):
             p.append(f"services/{nombre}: usa el tag 'latest'")
-        elif imagen.startswith(registry) and not digests.esta_pinneado(imagen):
+        elif exigir_pin \
+                and (imagen.startswith(registry) or digests.separar(imagen)[0] in propios) \
+                and not digests.esta_pinneado(imagen):
             p.append(
-                f"services/{nombre}: la imagen {imagen!r} es del registry propio y "
-                f"no está pinneada por digest"
+                f"services/{nombre}: la imagen {imagen!r} es de Accusys y no está "
+                f"pinneada por digest"
             )
 
     if manifiesto is not None:
@@ -124,11 +139,13 @@ def problemas_del_compose(texto, manifiesto=None, registry=REGISTRY_PROPIO):
     return p
 
 
-def generar(ruta_plantilla, manifiesto, entorno=None, salida=None, verificar=True):
+def generar(ruta_plantilla, manifiesto, entorno=None, salida=None, verificar=True,
+            exigir_pin=True):
     """Renderiza, verifica y opcionalmente escribe el compose."""
     texto = render_desde_archivos(ruta_plantilla, manifiesto, entorno=entorno)
     if verificar:
-        problemas = problemas_del_compose(texto, manifiesto=manifiesto)
+        problemas = problemas_del_compose(texto, manifiesto=manifiesto,
+                                          exigir_pin=exigir_pin)
         if problemas:
             raise ErrorValidacion(problemas)
     if salida is not None:

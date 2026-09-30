@@ -119,3 +119,23 @@ class TestVerificarCompleto:
                           cliente_http=cliente({}), dormir=reloj.dormir, reloj=reloj)
         assert inf.ok
         assert len(inf.omitidos) == 2
+
+
+class TestHealthcheckSinUrl:
+    def test_no_hay_smoke_que_pedir(self):
+        """Sin URL, el healthcheck del contenedor ya es el criterio: el smoke no
+        agrega nada y no debe reportar ni éxito ni omisión."""
+        pedidas = []
+
+        def cliente_que_anota(url, timeout):
+            pedidas.append(url)
+            return 200, ""
+        assert v.smoke_http([{"servicio": "api", "timeout_s": 60}],
+                            cliente=cliente_que_anota) == []
+        assert pedidas == []
+
+    def test_mezcla_con_y_sin_url(self):
+        checks = [{"servicio": "api", "timeout_s": 60},
+                  {"servicio": "web", "url": "http://web/h", "espera": 200, "timeout_s": 5}]
+        r = v.smoke_http(checks, cliente=cliente({"http://web/h": (200, "")}))
+        assert [x.nombre for x in r] == ["smoke:web"]

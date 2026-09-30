@@ -217,6 +217,11 @@
     parametria: d => `${d.producto}: mantenimiento hasta ${d.mantenimiento_hasta || '—'} · canal ${d.canal} · autoservicio ${d.autoservicio ? 'sí' : 'no'}`,
     codigo_enrolamiento: d => `Código de enrolamiento emitido${d.host ? ' para ' + d.host : ''}`,
     agente_revocado: d => `Agente ${d.agente || ''} revocado`,
+    llave_emitida: d => `Llave de enrolamiento «${d.nombre || ''}» generada`,
+    llave_revocada: () => 'Llave de enrolamiento revocada',
+    conexion_solicitada: d => `Un agente pidió conexión (${d.ambiente || ''})`,
+    conexion_aceptada: d => `Conexión aceptada: ${d.host || ''} (${d.ambiente || ''})`,
+    conexion_rechazada: d => `Conexión rechazada: ${d.host || ''} (${d.ambiente || ''})`,
     orden: d => `Orden de ${d.tipo}${d.release ? ' ' + d.release : ''} sobre ${d.instalacion || ''}`,
     orden_retirada: d => `Orden ${d.orden} retirada`,
     rollback_cancelado: d => `Vuelta atrás cancelada en ${d.orden}`,
@@ -227,12 +232,17 @@
   };
 
   async function cargar() {
-    const [yo, catalogo, tenants, parque, ordenes, usuarios, auditoria, habilitaciones] = await Promise.all([
+    const [yo, catalogo, tenants, parque, ordenes, usuarios, auditoria, habilitaciones, solicitudes] = await Promise.all([
       api('GET', '/yo'), api('GET', '/catalogo'), api('GET', '/tenants'), api('GET', '/parque'),
       api('GET', '/ordenes?limite=300'), api('GET', '/usuarios'), api('GET', '/auditoria?limite=300'),
-      api('GET', '/habilitaciones')
+      api('GET', '/habilitaciones'), api('GET', '/solicitudes')
     ]);
-    const S = { hoy: new Date().toISOString().slice(0, 10), mails: [], manifiestos: {}, ordenes, habilitaciones, yo };
+    const S = { hoy: new Date().toISOString().slice(0, 10), mails: [], manifiestos: {}, ordenes, habilitaciones, yo, llaves: [] };
+    S.solicitudes = solicitudes.map(x => ({
+      id: limpio(x.id), tenant: x.tenant, llave: x.llave, host: limpio(x.host), ambiente: limpio(x.ambiente),
+      version: limpio(x.version) || '—', ip: limpio(x.ip) || '—', estado: x.estado,
+      creada: haceCuanto(x.creada), resueltaPor: x.resuelta_por || ''
+    }));
 
     S.productos = catalogo.map(p => ({ id: p.id, codigo: p.id.toUpperCase(), nombre: p.nombre, desc: p.descripcion || '' }));
     S.releases = {};
@@ -265,7 +275,7 @@
     S.agentes = []; S.instalaciones = [];
     parque.forEach(a => {
       S.agentes.push({
-        id: limpio(a.id), tenant: a.tenant, host: limpio(a.host), version: limpio(a.version) || '—', disco: null,
+        id: limpio(a.id), tenant: a.tenant, host: limpio(a.host), ambiente: limpio(a.ambiente) || '', version: limpio(a.version) || '—', disco: null,
         estado: a.estado === 'revocado' ? 'revocado' : a.en_linea ? 'online' : 'offline',
         visto: haceCuanto(a.ultimo_contacto)
       });

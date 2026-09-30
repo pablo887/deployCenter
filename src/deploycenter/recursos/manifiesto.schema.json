@@ -97,13 +97,14 @@
       }
     },
     "healthchecks": {
-      "description": "Cómo se comprueba que la versión levantó. Sin esto no hay criterio objetivo de éxito ni rollback automático.",
+      "description": "Cómo se comprueba que la versión levantó. Sin esto no hay criterio objetivo de éxito ni rollback automático. Sin url, el criterio es el healthcheck del contenedor en el compose (healthy); con url, además se pide esa URL y se espera el código.",
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["servicio", "url", "espera", "timeout_s"],
+        "required": ["servicio", "timeout_s"],
+        "dependentRequired": { "url": ["espera"], "espera": ["url"] },
         "properties": {
           "servicio": {
             "type": "string",
@@ -122,6 +123,26 @@
             "type": "integer",
             "minimum": 5,
             "maximum": 900
+          }
+        }
+      }
+    },
+    "dependencias": {
+      "description": "Servicios externos al stack que tienen que responder antes de desplegar: la base, un IdP, un gateway. El preflight abre una conexión TCP a cada uno. host y puerto pueden ser ${VARIABLE}: se resuelven con el .env del cliente, en su servidor, y el valor no sale de ahí.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["nombre", "host", "puerto"],
+        "properties": {
+          "nombre": { "type": "string", "minLength": 2 },
+          "host": { "type": "string", "minLength": 1 },
+          "puerto": { "type": "string", "minLength": 1 },
+          "bloqueante": {
+            "description": "Si no responde, ¿se frena el despliegue? Por defecto sí.",
+            "type": "boolean",
+            "default": true
           }
         }
       }

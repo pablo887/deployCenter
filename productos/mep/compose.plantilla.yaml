@@ -1,97 +1,201 @@
 {#
-  Plantilla de compose de MEP.
+  Plantilla estándar de MEP (núcleo). Sale de normalizar una instalación real.
 
-  Reglas de esta plantilla, que valen para todos los productos:
-
-  - Las imágenes se interpolan con Jinja desde el manifiesto ({{ '{{ imagenes.x }}' }}),
-    así quedan pinneadas por digest en el archivo generado.
-  - Los VALORES del cliente no se interpolan con Jinja: viajan con ${VARIABLE}, que
-    docker compose resuelve leyendo el .env del directorio del stack. Así el compose
-    generado se puede leer, versionar y mandar por mail sin que lleve nada del
-    cliente adentro.
-  - Jinja se usa solo para lo que cambia la ESTRUCTURA del archivo (qué servicios
-    existen, dónde se publica un puerto), no para rellenar valores.
+  Reglas:
+  - Las imágenes de Accusys vienen del manifiesto, por digest. El tag queda al
+    lado del digest y se lee en `tags` (el front muestra la versión de cada
+    servicio).
+  - Los valores del cliente viajan con ${VARIABLE}: los resuelve docker compose
+    con el .env del directorio del stack. Cada servicio recibe solo las
+    variables que usa; no hay env_file, para que la clave del BCRA no llegue al
+    front ni la de la base al worker.
+  - Jinja solo decide estructura: qué entradas de extra_hosts existen.
+  - Nombres de servicio, container_name, redes y rutas de datos son los que ya
+    tienen las instalaciones. Por eso no se fija `name:`: el proyecto sigue
+    siendo el directorio, y el primer despliegue estándar reemplaza a los
+    contenedores existentes en vez de chocar con ellos.
 #}
 # ------------------------------------------------------------------
 # GENERADO POR deployCenter — no editar a mano.
 # Producto {{ producto }} · release {{ release }}
 # Los cambios hechos acá se pierden en el próximo despliegue.
 # ------------------------------------------------------------------
-name: {{ producto }}
 
 services:
 
-  api:
-    image: {{ imagenes.api }}
+  mep-redis:
+    # sin persistencia: es cache, se reconstruye al arrancar
+    image: redis:7.2
+    container_name: mep-redis
     restart: unless-stopped
-    env_file:
-      - .env
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - {{ producto }}
+    command: redis-server --save "" --appendonly no
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
-
-  web:
-    image: {{ imagenes.web }}
-    restart: unless-stopped
-    env_file:
-      - .env
-    depends_on:
-      - api
-    ports:
-      # Por defecto se publica solo en loopback: casi todos los clientes ponen su
-      # propio reverse proxy adelante. Se cambia con MEP_EXPONER_EN en el .env.
-      - "{{ env.get('MEP_EXPONER_EN', '127.0.0.1') }}:${MEP_PUERTO_WEB}:8080"
-    networks:
-      - {{ producto }}
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
-
-  db:
-    # Imagen de terceros: no la publica Accusys, así que no está en el manifiesto.
-    # Va por tag fijo — nunca latest — y la sube el cliente con el resto del stack.
-    image: postgres:16.4-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${MEP_DB_NOMBRE}
-      POSTGRES_USER: ${MEP_DB_USUARIO}
-      POSTGRES_PASSWORD: ${MEP_DB_CLAVE}
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 2s
+      timeout: 2s
+      start_period: 3s
+      retries: 5
     volumes:
-      - datos-db:/var/lib/postgresql/data
+      - ${MEP_DATOS:-../../data/apps/mep}/redis:/data
     networks:
-      - {{ producto }}
+      - uw2-backend
+
+  mep-rabbitmq:
+    image: rabbitmq:3.12.8-management
+    container_name: mep-rabbitmq
+    restart: unless-stopped
+    mem_limit: ${MEP_RABBIT_MEMORIA:-2048M}
+    cpuset: "${MEP_RABBIT_CPUSET:-0}"
+    cpu_shares: 64
+    cpus: ${MEP_RABBIT_CPUS:-0.2}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${MEP_DB_USUARIO} -d ${MEP_DB_NOMBRE}"]
-      interval: 10s
-      timeout: 5s
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 15s
+      start_period: 30s
       retries: 10
-      start_period: 15s
+    volumes:
+      - ${MEP_DATOS:-../../data/apps/mep}/rabbitmq:/var/lib/rabbitmq
+    networks:
+      - uw2-backend
 
+  mep-api:
+    image: {{ imagenes['mep-api'] }}
+    container_name: mep-api
+    restart: unless-stopped
+    depends_on:
+      mep-redis:
+        condition: service_healthy
+      mep-rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "80"]
+      interval: 2s
+      timeout: 2s
+      # aplica las migraciones al arrancar: el puerto recién abre después
+      start_period: 20s
+      retries: 5
+    ports:
+      - "${MEP_PUERTO_API:-42904}:80"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      UNIWEB_SERVER: ${UNIWEB_SERVER:-http://manager-api:8080}
+      APPLICATION_NAME: MEP
+      API_CLIENTES: ${API_CLIENTES:-http://mep-connector}
+      ApiBCRAEndpoint: http://mep-bcra
+      DbConnectionString: "Server=${CS_SERVER},${CS_PORT};Database=${CS_DATABASE};User ID=${CS_USER};Password=${CS_PASS};MultipleActiveResultSets=True"
+      DbConnectionStringLog: "Server=${CS_LOG_SERVER},${CS_LOG_PORT};Database=${CS_LOG_DATABASE};User ID=${CS_LOG_USER};Password=${CS_LOG_PASS};MultipleActiveResultSets=True"
+      REDIS: mep-redis
+      RABBIT: mep-rabbitmq
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    networks:
+      - uw2-backend
+
+  mep-worker:
+    image: {{ imagenes['mep-worker'] }}
+    container_name: mep-worker
+    restart: unless-stopped
+    depends_on:
+      mep-redis:
+        condition: service_healthy
+      mep-rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      # el worker no expone puerto: se considera sano si llega a RabbitMQ
+      test: ["CMD", "nc", "-z", "mep-rabbitmq", "15672"]
+      interval: 2s
+      timeout: 2s
+      start_period: 3s
+      retries: 5
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      WORKER_ONLINE: ${WORKER_ONLINE:-S}
+      WORKER_TIME_TO_API: ${WORKER_TIME_TO_API:-600}
+      MEP_MICROSERVICIO_BCRA_URL: http://mep-bcra
+      REDIS: mep-redis
+      RABBIT: mep-rabbitmq
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    networks:
+      - uw2-backend
+
+  mep-bcra:
+    image: {{ imagenes['mep-bcra'] }}
+    container_name: mep-bcra
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "80"]
+      interval: 2s
+      timeout: 2s
+      start_period: 3s
+      retries: 5
+    ports:
+      - "${MEP_PUERTO_BCRA:-8540}:80"
+    environment:
+      BCRA_USER: ${BCRA_USER}
+      BCRA_PASS: ${BCRA_PASS}
+      BCRA_TIMEOUT_MS: ${BCRA_TIMEOUT_MS:-60000}
+      # homologación o producción: es de cada ambiente, no de la plantilla
+      BCRA_ENDPOINT: ${BCRA_ENDPOINT}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+{% if env.get('BCRA_IP_HOMOLOGACION') or env.get('BCRA_IP_PRODUCCION') %}
+    # los nombres del BCRA no resuelven por DNS en la red del banco
+    extra_hosts:
+{% if env.get('BCRA_IP_HOMOLOGACION') %}
+      - "serviciosmep.homologacion.bcra.sfa:${BCRA_IP_HOMOLOGACION}"
+{% endif %}
+{% if env.get('BCRA_IP_PRODUCCION') %}
+      - "serviciosmep.bcra.sfa:${BCRA_IP_PRODUCCION}"
+{% endif %}
+{% endif %}
+    volumes:
+      - ${MEP_DATOS:-../../data/apps/mep}/certificates:/usr/local/share/ca-certificates
+    networks:
+      - uw2-backend
+
+  mep-app:
+    image: {{ imagenes['mep-app'] }}
+    container_name: mep-app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/root/home"]
+      interval: 2s
+      timeout: 2s
+      start_period: 30s
+      retries: 5
+    ports:
+      - "${MEP_PUERTO_APP:-4102}:80"
+    environment:
+      # la versión de cada servicio sale del tag del manifiesto
+      MEPAPIVERSION: "{{ tags['mep-api'] }}"
+      MEPAPPVERSION: "{{ tags['mep-app'] }}"
+      MEPWORKERVERSION: "{{ tags['mep-worker'] }}"
+      MEPBCRAVERSION: "{{ tags['mep-bcra'] }}"
+      # el connector es del banco: su versión la informa su propio stack
+      MEPCONNECTORVERSION: ${MEP_CONNECTOR_VERSION:-}
+      MEPCEDINVERSION: ${MEP_CEDIN_VERSION:-1.0.1}
+      MEPSMLVERSION: ${MEP_SML_VERSION:-1.0.1}
+      IDP_CLIENT_ID: ${IDP_CLIENT_ID}
+      IDP_SERVER_URL: ${IDP_SERVER_URL}
+      ENTIDAD: ${ENTIDAD}
+      SERVICE_MANAGER_URL: http://wso2am:8280/service.manager/1.0
+      SERVICE_NOTIFICATION_URL: https://wso2am:8280/service.notification/1.0
+      SERVICE_API_MEP_URL: http://wso2am:8280/service.mep/1.0
+      SERVICE_API_SML_URL: http://wso2am:8280/service.mep-sml/1.0
+      SERVICE_API_CEDIN_URL: http://wso2am:8280/service.mep-cedin/1.0
+      SERVICE_API_EXTERNA_URL: http://wso2am:8280/service.mep-externo/1.0
+      SERVICE_API_CONTABLE_URL: http://wso2am:8280/service.mep-contable/1.0
+      WEBSOCKET_ENABLED: ${WEBSOCKET_ENABLED:-false}
+      WEBSOCKET_URL: http://wso2am:8280/websocket/1.0
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    networks:
+      - uw2-frontend
+
+# Las crea UniWeb. El preflight del agente comprueba que existan antes de
+# desplegar; este stack nunca las crea ni las borra.
 networks:
-  {{ producto }}:
-    name: {{ producto }}
-
-volumes:
-  datos-db:
-    name: {{ producto }}-datos-db
+  uw2-backend:
+    name: uw2-backend
+    external: true
+  uw2-frontend:
+    name: uw2-frontend
+    external: true

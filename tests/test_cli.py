@@ -17,7 +17,8 @@ def repo(tmp_path, raiz):
     """Copia mínima del repo real, para poder romperla sin consecuencias."""
     destino = tmp_path / "repo"
     (destino / "productos").mkdir(parents=True)
-    shutil.copytree(raiz / "productos" / "mep", destino / "productos" / "mep")
+    shutil.copytree(raiz / "tests" / "datos" / "catalogo" / "productos" / "mep",
+                    destino / "productos" / "mep")
     return destino
 
 
@@ -117,6 +118,23 @@ class TestRender:
 
 
 class TestNuevoRelease:
+    def test_tag_por_servicio(self, repo):
+        assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+                      "--version", "4.8.0", "--tag", "api=1.1.36") == OK
+        m = json.loads((repo / "productos/mep/releases/4.8.0/manifiesto.json").read_text())
+        assert m["imagenes"]["api"].endswith("/api:1.1.36")
+        assert m["imagenes"]["web"].endswith("/web:4.8.0")
+
+    def test_tag_de_un_servicio_que_no_existe(self, repo, capsys):
+        assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+                      "--version", "4.8.0", "--tag", "nada=1.0.0") == ERROR_USO
+        assert "nada" in capsys.readouterr().err
+
+    def test_tag_mal_escrito(self, repo, capsys):
+        assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+                      "--version", "4.8.0", "--tag", "api") == ERROR_USO
+        assert "SERVICIO=TAG" in capsys.readouterr().err
+
     def test_crea_manifiesto_y_changelog(self, repo, capsys):
         assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
                       "--version", "4.8.0", "--desde", ">=4.7.0") == OK
@@ -171,3 +189,65 @@ class TestSellar:
                       "--version", "4.7.1", "--desde", ">=4.5.0") == OK
         m = json.loads((repo / "productos/mep/releases/4.7.1/manifiesto.json").read_text())
         assert len(m["plantilla_sha256"]) == 64
+
+
+class TestBorradores:
+    def test_nuevo_release_como_borrador(self, repo):
+        assert correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+                      "--version", "4.8.0", "--borrador") == OK
+        ruta = repo / "productos/mep/borradores/4.8.0/manifiesto.json"
+        m = json.loads(ruta.read_text(encoding="utf-8"))
+        assert m["changelog"] == "productos/mep/borradores/4.8.0/changelog.md"
+        assert not (repo / "productos/mep/releases/4.8.0").exists()
+        assert correr("--raiz", str(repo), "validar", str(ruta), "--sin-pin") == OK
+
+    def test_repo_distinto_del_servicio(self, repo):
+        yml = repo / "productos/mep/producto.yaml"
+        yml.write_text(yml.read_text(encoding="utf-8").replace(
+            "  api:\n", "  api:\n    repo: api-banco\n", 1), encoding="utf-8")
+        correr("--raiz", str(repo), "nuevo-release", "--producto", "mep", "--version", "4.8.0")
+        m = json.loads((repo / "productos/mep/releases/4.8.0/manifiesto.json").read_text())
+        assert m["imagenes"]["api"].endswith("/api-banco:4.8.0")
+        assert m["imagenes"]["web"].endswith("/web:4.8.0")
+
+    def test_render_de_un_borrador_sin_pinear(self, repo, capsys):
+        correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+               "--version", "4.8.0", "--borrador")
+        ruta = repo / "productos/mep/borradores/4.8.0/manifiesto.json"
+        assert correr("--raiz", str(repo), "render", "--manifiesto", str(ruta),
+                      "--forzar") == FALLA_VALIDACION
+        capsys.readouterr()
+        assert correr("--raiz", str(repo), "render", "--manifiesto", str(ruta),
+                      "--forzar", "--sin-pin") == OK
+        assert "/api:4.8.0" in capsys.readouterr().out
+
+    def test_promover_exige_digests(self, repo, capsys):
+        correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+               "--version", "4.8.0", "--borrador")
+        ruta = repo / "productos/mep/borradores/4.8.0/manifiesto.json"
+        assert correr("--raiz", str(repo), "promover", str(ruta)) == FALLA_VALIDACION
+        assert "digest" in capsys.readouterr().err
+        assert ruta.is_file()  # no movió nada
+
+    def test_promover_un_borrador_pinneado(self, repo):
+        correr("--raiz", str(repo), "nuevo-release", "--producto", "mep",
+               "--version", "4.8.0", "--borrador")
+        ruta = repo / "productos/mep/borradores/4.8.0/manifiesto.json"
+        m = json.loads(ruta.read_text(encoding="utf-8"))
+        for s in m["imagenes"]:
+            m["imagenes"][s] += "@sha256:" + "e" * 64
+        ruta.write_text(json.dumps(m), encoding="utf-8")
+
+        assert correr("--raiz", str(repo), "promover", str(ruta)) == OK
+        publicado = repo / "productos/mep/releases/4.8.0/manifiesto.json"
+        assert not ruta.exists()
+        m = json.loads(publicado.read_text(encoding="utf-8"))
+        assert m["changelog"] == "productos/mep/releases/4.8.0/changelog.md"
+        assert (publicado.parent / "changelog.md").is_file()
+        assert correr("--raiz", str(repo), "validar", str(publicado)) == OK
+
+    def test_promover_algo_que_no_es_borrador(self, repo, capsys):
+        ruta = repo / "productos/mep/releases/4.7.0/manifiesto.json"
+        assert correr("--raiz", str(repo), "promover", str(ruta)) == ERROR_USO
+        assert "borradores" in capsys.readouterr().err
+

@@ -8,7 +8,8 @@ servidor?" tiene que ser un no verificable.
 Por eso:
 
 - Las únicas operaciones son las de esta clase: pull, up, down, ps, logs e
-  inspect. No hay forma de pedirle al agente que corra un comando arbitrario.
+  inspect (de imágenes y de redes). No hay forma de pedirle al agente que
+  corra un comando arbitrario.
 - Todas se ejecutan sobre un directorio de stack concreto, validado contra la
   raíz configurada. Un manifiesto no puede hacer que el agente toque
   /etc o el stack de otro producto.
@@ -170,6 +171,13 @@ class Docker:
         completa con digest, así que responde por el binario exacto."""
         codigo, _salida, _error = self.ejecutar(
             ["docker", "image", "inspect", "--format", "{{.Id}}", referencia])
+        return codigo == 0
+
+    def red_existe(self, nombre):
+        """True si la red existe en el host. Solo consulta: el agente no crea redes
+        externas, porque son de otro stack (en MEP, las de UniWeb)."""
+        codigo, _salida, _error = self.ejecutar(
+            ["docker", "network", "inspect", "--format", "{{.Name}}", str(nombre)])
         return codigo == 0
 
     # -- utilidades sin docker ---------------------------------------------- #

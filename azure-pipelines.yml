@@ -58,9 +58,15 @@ steps:
   # más se parece a lo que va a pasar en el servidor del cliente.
   - script: |
       set -e
-      mkdir -p .ci && cp ejemplos/cliente-demo/.env.ejemplo .ci/.env
-      python -m deploycenter.cli --sin-color render \
-        --producto mep --release 4.7.0 \
-        --entorno .ci/.env --salida .ci/docker-compose.yml
-      cd .ci && docker compose config --quiet
+      mkdir -p .ci/mep .ci/banco
+      cp ejemplos/cliente-demo/.env.ejemplo .ci/mep/.env
+      cp ejemplos/cliente-demo/.env.banco.ejemplo .ci/banco/.env
+      python -m deploycenter.cli --sin-color render --sin-pin \
+        --manifiesto productos/mep/borradores/2026.10.0/manifiesto.json \
+        --entorno .ci/mep/.env --salida .ci/mep/docker-compose.yml
+      python -m deploycenter.cli --sin-color render --sin-pin \
+        --manifiesto productos/mep-naranjax/borradores/2026.10.0/manifiesto.json \
+        --entorno .ci/banco/.env --salida .ci/banco/docker-compose.yml
+      (cd .ci/mep && docker compose config --quiet)
+      (cd .ci/banco && docker compose config --quiet)
     displayName: El compose generado es válido para docker compose

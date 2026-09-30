@@ -124,14 +124,25 @@ window.DC_SEED = {
   ],
 
   agentes: [
-    { id: 'ag-andino-01',    tenant: 'andino',    host: 'srv-dock-01.andino.local',    version: '1.3.0', estado: 'online',  visto: 'hace 4 s',   disco: 58 },
-    { id: 'ag-andino-02',    tenant: 'andino',    host: 'srv-dock-homo.andino.local',  version: '1.3.0', estado: 'online',  visto: 'hace 7 s',   disco: 71 },
-    { id: 'ag-litoral-01',   tenant: 'litoral',   host: 'dckprd01.litoral.lan',        version: '1.3.0', estado: 'online',  visto: 'hace 3 s',   disco: 40 },
-    { id: 'ag-mercantil-01', tenant: 'mercantil', host: 'docker-prod.cmercantil.int',  version: '1.2.1', estado: 'offline', visto: 'hace 3 h',   disco: 22 },
-    { id: 'ag-horizonte-01', tenant: 'horizonte', host: 'fh-app-01',                   version: '1.3.0', estado: 'online',  visto: 'hace 5 s',   disco: 64 },
-    { id: 'ag-horizonte-02', tenant: 'horizonte', host: 'fh-homo-01',                  version: '1.3.0', estado: 'online',  visto: 'hace 9 s',   disco: 80 },
-    { id: 'ag-vallesur-01',  tenant: 'vallesur',  host: 'vs-docker-01',                version: '1.2.1', estado: 'online',  visto: 'hace 6 s',   disco: 47 },
-    { id: 'ag-trescerros-01',tenant: 'trescerros',host: 'tc-srv-prod',                 version: '1.3.0', estado: 'online',  visto: 'hace 2 s',   disco: 35 }
+    { id: 'ag-andino-01',    tenant: 'andino',    host: 'srv-dock-01.andino.local',    version: '1.3.0', ambiente: 'produccion', estado: 'online',  visto: 'hace 4 s',   disco: 58 },
+    { id: 'ag-andino-02',    tenant: 'andino',    host: 'srv-dock-homo.andino.local',  version: '1.3.0', ambiente: 'homologacion', estado: 'online',  visto: 'hace 7 s',   disco: 71 },
+    { id: 'ag-litoral-01',   tenant: 'litoral',   host: 'dckprd01.litoral.lan',        version: '1.3.0', ambiente: 'produccion', estado: 'online',  visto: 'hace 3 s',   disco: 40 },
+    { id: 'ag-mercantil-01', tenant: 'mercantil', host: 'docker-prod.cmercantil.int',  version: '1.2.1', ambiente: 'produccion', estado: 'offline', visto: 'hace 3 h',   disco: 22 },
+    { id: 'ag-horizonte-01', tenant: 'horizonte', host: 'fh-app-01',                   version: '1.3.0', ambiente: 'produccion', estado: 'online',  visto: 'hace 5 s',   disco: 64 },
+    { id: 'ag-horizonte-02', tenant: 'horizonte', host: 'fh-homo-01',                  version: '1.3.0', ambiente: 'homologacion', estado: 'online',  visto: 'hace 9 s',   disco: 80 },
+    { id: 'ag-vallesur-01',  tenant: 'vallesur',  host: 'vs-docker-01',                version: '1.2.1', ambiente: 'produccion', estado: 'online',  visto: 'hace 6 s',   disco: 47 },
+    { id: 'ag-trescerros-01',tenant: 'trescerros',host: 'tc-srv-prod',                 version: '1.3.0', ambiente: 'produccion', estado: 'online',  visto: 'hace 2 s',   disco: 35 }
+  ],
+
+  // llaves de enrolamiento por cliente (en la maqueta no hay secreto: solo el prefijo)
+  llaves: [
+    { id: 1, tenant: 'litoral', nombre: 'Servidores Docker', prefijo: 'DCK-7QHM', creada: '2026-09-02 10:14', revocada: null },
+    { id: 2, tenant: 'andino',  nombre: 'Producción y homologación', prefijo: 'DCK-K4TX', creada: '2026-08-11 16:02', revocada: null }
+  ],
+
+  // agentes que se presentaron con la llave de su cliente y esperan que Soporte los acepte
+  solicitudes: [
+    { id: 'sol-4f1c09a2b7e3', tenant: 'litoral', llave: 1, host: 'dckhomo01.litoral.lan', ambiente: 'homologacion', version: '1.3.0', ip: '200.45.12.9', estado: 'pendiente', creada: 'hace 12 min' }
   ],
 
   instalaciones: [

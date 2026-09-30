@@ -60,7 +60,10 @@ class TestCatalogoDeLaDemo:
         assert paquete["manifiesto"]["release"] == "2.0.0"
         assert "Demo 2.0.0" in paquete["changelog"]
         assert c.novedades("demo", "3.0.0")[0].startswith("**Release roto")
-        assert c.release("mep", "4.7.0") is not None
+        # el producto real sigue viniendo de la raíz principal
+        assert c.datos_producto("mep")["registry"] == "docker.io/accusystechnology"
+        # y sus borradores no se ofrecen: no hay nada que ordenar hasta publicar
+        assert c.releases("mep") == []
 
 
 @pytest.fixture

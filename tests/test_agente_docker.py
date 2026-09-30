@@ -129,3 +129,14 @@ class TestParseoDePs:
     def test_cae_a_name_si_no_hay_service(self):
         assert Docker._parsear_ps('{"Name":"mep-api-1","State":"running"}')[0]["servicio"] == \
             "mep-api-1"
+
+
+class TestRedes:
+    def test_consulta_la_red_por_nombre(self, runner_fijo):
+        ejecutar = runner_fijo(codigo=0, salida="uw2-backend")
+        assert Docker(ejecutar=ejecutar).red_existe("uw2-backend")
+        assert ejecutar.llamadas[0][:3] == ["docker", "network", "inspect"]
+        assert "uw2-backend" in ejecutar.llamadas[0]
+
+    def test_red_ausente(self, runner_fijo):
+        assert not Docker(ejecutar=runner_fijo(codigo=1)).red_existe("uw2-backend")
