@@ -9,7 +9,10 @@
     dc-hub token-dev   <uuid>
     dc-hub tenant      andino "Banco Andino"
     dc-hub adquirir    andino mep --hasta 2026-12-31
-    dc-hub codigo      andino --host srv-dock-01
+    dc-hub llave       andino --nombre "Servidores de producción"
+    dc-hub solicitudes [--tenant andino] [--estado pendiente]
+    dc-hub aceptar     sol-…       /   dc-hub rechazar sol-…
+    dc-hub codigo      andino --host srv-dock-01      (alta vieja, de un solo uso)
     dc-hub ordenar     --agente ag-… --instalacion mep --tipo desplegar --release 4.7.0
     dc-hub parque
     dc-hub orden       ord-…
@@ -196,6 +199,24 @@ def cmd_codigo(args):
     return OK
 
 
+def cmd_llave(args):
+    datos = _hub(args).emitir_llave(args.tenant, args.nombre)
+    _imprimir(datos)
+    print(f"\nen el .env del agente: DC_CLIENTE={args.tenant} DC_LLAVE={datos['llave']} "
+          f"DC_AMBIENTE=<ambiente>", file=sys.stderr)
+    return OK
+
+
+def cmd_solicitudes(args):
+    _imprimir(_hub(args).solicitudes(tenant_id=args.tenant, estado=args.estado))
+    return OK
+
+
+def cmd_resolver(args):
+    _imprimir(_hub(args).resolver_solicitud(args.solicitud, args.aceptar))
+    return OK
+
+
 def cmd_ordenar(args):
     _imprimir(_hub(args).crear_orden(args.agente, args.instalacion, args.tipo,
                                      release=args.release, pedida_por=args.por))
@@ -289,6 +310,22 @@ def construir_parser():
     c.add_argument("tenant")
     c.add_argument("--host")
     c.set_defaults(func=cmd_codigo)
+
+    ll = sub.add_parser("llave", help="genera la llave de enrolamiento de un cliente")
+    ll.add_argument("tenant")
+    ll.add_argument("--nombre", required=True)
+    ll.set_defaults(func=cmd_llave)
+
+    so = sub.add_parser("solicitudes", help="pedidos de conexión de agentes")
+    so.add_argument("--tenant")
+    so.add_argument("--estado", choices=["pendiente", "aceptada", "rechazada", "conectada",
+                                          "vencida", "reemplazada"])
+    so.set_defaults(func=cmd_solicitudes)
+
+    for nombre, aceptar in (("aceptar", True), ("rechazar", False)):
+        r = sub.add_parser(nombre, help=f"{nombre} el pedido de conexión de un agente")
+        r.add_argument("solicitud")
+        r.set_defaults(func=cmd_resolver, aceptar=aceptar)
 
     o = sub.add_parser("ordenar", help="encola una orden para un agente")
     o.add_argument("--agente", required=True)

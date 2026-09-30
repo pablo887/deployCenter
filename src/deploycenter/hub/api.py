@@ -52,6 +52,16 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=No
         host: str = Field(min_length=1, max_length=200)
         version: str | None = Field(default=None, max_length=40)
 
+    class PedidoConexion(BaseModel):
+        cliente: str = Field(min_length=1, max_length=40)
+        llave: str = Field(min_length=1, max_length=60)
+        host: str = Field(min_length=1, max_length=200)
+        ambiente: str = Field(min_length=2, max_length=30)
+        version: str | None = Field(default=None, max_length=40)
+
+    class PedidoLlave(BaseModel):
+        nombre: str = Field(min_length=1, max_length=100)
+
     class InstalacionReportada(BaseModel):
         nombre: str = Field(min_length=1, max_length=100)
         producto: str | None = Field(default=None, max_length=40)
@@ -175,6 +185,17 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=No
     def enrolar(pedido: PedidoEnrolar):
         return hub.enrolar(pedido.codigo, pedido.host, pedido.version)
 
+    @app.post("/api/agente/v1/solicitudes", status_code=202)
+    def solicitar(pedido: PedidoConexion, request: Request):
+        ip = request.client.host if request.client else None
+        return hub.solicitar_conexion(pedido.cliente, pedido.llave, pedido.host,
+                                      pedido.ambiente, pedido.version, ip=ip)
+
+    @app.get("/api/agente/v1/solicitudes/{solicitud_id}")
+    def consultar_solicitud(solicitud_id: str,
+                            x_dc_solicitud: Annotated[str, Header()] = ""):
+        return hub.consultar_solicitud(solicitud_id, x_dc_solicitud)
+
     @app.post("/api/agente/v1/latido")
     def latido(pedido: PedidoLatido, agente: AgenteActual):
         return hub.latido(agente["id"], pedido.version,
@@ -271,6 +292,30 @@ def crear_app(hub, validador=None, intervalo_poll_s=1.0, web=None, config_web=No
     @app.post("/api/v1/tenants/{tenant_id}/codigos")
     def codigo(tenant_id: str, pedido: PedidoCodigo, p: Persona):
         return hub.emitir_codigo(tenant_id, host=pedido.host, perfil=p)
+
+    @app.get("/api/v1/tenants/{tenant_id}/llaves")
+    def llaves(tenant_id: str, p: Persona):
+        return hub.llaves(tenant_id, perfil=p)
+
+    @app.post("/api/v1/tenants/{tenant_id}/llaves", status_code=201)
+    def emitir_llave(tenant_id: str, pedido: PedidoLlave, p: Persona):
+        return hub.emitir_llave(tenant_id, pedido.nombre, perfil=p)
+
+    @app.post("/api/v1/llaves/{llave_id}/revocar")
+    def revocar_llave(llave_id: int, p: Persona):
+        return hub.revocar_llave(llave_id, perfil=p)
+
+    @app.get("/api/v1/solicitudes")
+    def solicitudes(p: Persona, tenant: str | None = None, estado: str | None = None):
+        return hub.solicitudes(tenant_id=tenant, estado=estado, perfil=p)
+
+    @app.post("/api/v1/solicitudes/{solicitud_id}/aceptar")
+    def aceptar_solicitud(solicitud_id: str, p: Persona):
+        return hub.resolver_solicitud(solicitud_id, True, perfil=p)
+
+    @app.post("/api/v1/solicitudes/{solicitud_id}/rechazar")
+    def rechazar_solicitud(solicitud_id: str, p: Persona):
+        return hub.resolver_solicitud(solicitud_id, False, perfil=p)
 
     @app.post("/api/v1/agentes/{agente_id}/revocar")
     def revocar(agente_id: str, p: Persona):

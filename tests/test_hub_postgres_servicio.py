@@ -127,6 +127,31 @@ class TestCircuitoConRLS:
         assert all(r["tenant"] == "andino" for r in registros)
 
 
+class TestConexionPorLlaveConRLS:
+    def test_soporte_emite_la_llave_y_acepta_el_pedido(self, hub_pg):
+        sop = perfil(hub_pg, "soporte")
+        llave = hub_pg.emitir_llave("andino", "producción", perfil=sop)
+        assert [x["prefijo"] for x in hub_pg.llaves("andino", perfil=sop)] == [
+            llave["llave"][:8]]
+
+        pedido = hub_pg.solicitar_conexion("andino", llave["llave"], "srv-mep-01",
+                                           "produccion", ip="10.0.0.9")
+        # el cliente ve el pedido; el de otro cliente no
+        assert [x["id"] for x in hub_pg.solicitudes(perfil=perfil(hub_pg, "aprobador"))] == [
+            pedido["solicitud"]]
+        assert hub_pg.solicitudes(perfil=perfil(hub_pg, "operador_otro")) == []
+
+        hub_pg.resolver_solicitud(pedido["solicitud"], True, perfil=sop)
+        datos = hub_pg.consultar_solicitud(pedido["solicitud"], pedido["secreto"])
+        assert datos["estado"] == "conectada"
+        (agente,) = hub_pg.parque(perfil=perfil(hub_pg, "operador"))
+        assert (agente["host"], agente["ambiente"]) == ("srv-mep-01", "produccion")
+
+        hub_pg.revocar_llave(llave["id"], perfil=sop)
+        with pytest.raises(srv.NoAutorizado):
+            hub_pg.solicitar_conexion("andino", llave["llave"], "srv-2", "produccion")
+
+
 class TestLaBaseEsLaSegundaBarrera:
     """Se apaga el chequeo de la aplicación y se comprueba que la base rechaza."""
 
@@ -174,3 +199,15 @@ class TestLaBaseEsLaSegundaBarrera:
     def test_el_operador_no_emite_codigos_aunque_el_hub_lo_deje(self, hub_pg, sin_chequeos):
         with pytest.raises(DBAPIError, match="row-level security"):
             hub_pg.emitir_codigo("andino", perfil=perfil(hub_pg, "operador"))
+
+    def test_el_aprobador_no_acepta_pedidos_aunque_el_hub_lo_deje(self, hub_pg, sin_chequeos):
+        llave = hub_pg.emitir_llave("andino", "x")
+        pedido = hub_pg.solicitar_conexion("andino", llave["llave"], "srv-x", "produccion")
+        with pytest.raises((DBAPIError, StaleDataError)):
+            hub_pg.resolver_solicitud(pedido["solicitud"], True,
+                                      perfil=perfil(hub_pg, "aprobador"))
+
+    def test_comercial_no_emite_llaves_aunque_el_hub_lo_deje(self, hub_pg, sin_chequeos):
+        with pytest.raises(DBAPIError, match="row-level security"):
+            hub_pg.emitir_llave("andino", "x", perfil=perfil(hub_pg, "comercial"))
+

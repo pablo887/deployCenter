@@ -346,3 +346,130 @@ class TestLimpieza:
         conector._limpiar_paquetes()
         assert len(list(carpeta.iterdir())) == con.PAQUETES_CONSERVADOS
 
+
+
+class TestConexionPorLlave:
+    """El agente se presenta con la llave y espera; Soporte lo acepta en la web."""
+
+    @pytest.fixture
+    def llave(self, hub):
+        return hub.emitir_llave("andino", "producción")["llave"]
+
+    def _esperar(self, red, tmp_path, llave, intentos=None, dormir=None, **kw):
+        cliente = con.ClienteHub(URL, transporte=red)
+        cred = con.Credenciales(tmp_path / "trabajo" / "credenciales.json")
+        sol = con.Solicitud(tmp_path / "trabajo" / "solicitud.json")
+        datos = con.conectar_por_llave(
+            cliente, cred, sol, URL, kw.pop("cliente", "andino"), llave,
+            kw.pop("host", "srv-mep-01"), kw.pop("ambiente", "produccion"),
+            intentos=intentos, dormir=dormir or (lambda _s: None), intervalo_s=0)
+        return datos, cred, sol
+
+    def test_espera_hasta_que_lo_aceptan(self, hub, red, tmp_path, llave):
+        vueltas = []
+
+        def dormir(_s):
+            vueltas.append(1)
+            if len(vueltas) == 2:  # Soporte acepta mientras el agente espera
+                (pendiente,) = hub.solicitudes(estado="pendiente")
+                hub.resolver_solicitud(pendiente["id"], True)
+
+        datos, cred, sol = self._esperar(red, tmp_path, llave, dormir=dormir)
+        assert datos["tenant"] == "andino" and datos["ambiente"] == "produccion"
+        assert cred.existe() and not sol.ruta.exists()
+        # las credenciales quedan solo para el usuario del agente
+        assert (cred.ruta.stat().st_mode & 0o777) == 0o600
+        # y sirven para el canal
+        con.ClienteHub(URL, token=datos["token"], transporte=red).latido([])
+
+    def test_si_se_reinicia_sigue_esperando_el_mismo_pedido(self, hub, red, tmp_path, llave):
+        _, _, sol = self._esperar(red, tmp_path, llave, intentos=1)
+        guardado = sol.cargar()
+        assert guardado["solicitud"] and (sol.ruta.stat().st_mode & 0o777) == 0o600
+
+        _, _, sol = self._esperar(red, tmp_path, llave, intentos=1)
+        assert sol.cargar()["solicitud"] == guardado["solicitud"]
+        assert len(hub.solicitudes(estado="pendiente")) == 1
+
+    def test_si_cambia_la_configuracion_pide_de_nuevo(self, hub, red, tmp_path, llave):
+        _, _, sol = self._esperar(red, tmp_path, llave, intentos=1)
+        primero = sol.cargar()["solicitud"]
+        _, _, sol = self._esperar(red, tmp_path, llave, intentos=1, ambiente="homologacion")
+        assert sol.cargar()["solicitud"] != primero
+
+    def test_rechazado_se_detiene(self, hub, red, tmp_path, llave):
+        self._esperar(red, tmp_path, llave, intentos=1)
+        (pendiente,) = hub.solicitudes(estado="pendiente")
+        hub.resolver_solicitud(pendiente["id"], False)
+        with pytest.raises(con.ConexionRechazada, match="rechazó"):
+            self._esperar(red, tmp_path, llave)
+        assert not (tmp_path / "trabajo" / "solicitud.json").exists()
+
+    def test_llave_invalida(self, red, tmp_path):
+        with pytest.raises(con.ConexionRechazada, match="llave"):
+            self._esperar(red, tmp_path, "DCK-NADA-NADA-NADA-NADA-NADA")
+
+    def test_vencido_pide_de_nuevo(self, hub, red, tmp_path, llave, reloj_hub):
+        from deploycenter.hub import servicio as srv
+        _, _, sol = self._esperar(red, tmp_path, llave, intentos=1)
+        primero = sol.cargar()["solicitud"]
+        reloj_hub.avanzar(srv.VIGENCIA_SOLICITUD_H * 3600 + 1)
+        _, _, sol = self._esperar(red, tmp_path, llave, intentos=1)
+        assert sol.cargar()["solicitud"] != primero
+
+    def test_sin_red_sigue_intentando(self, hub, red, tmp_path, llave):
+        self._esperar(red, tmp_path, llave, intentos=1)
+        red.cortada = True
+        datos, _, sol = self._esperar(red, tmp_path, llave, intentos=3)
+        assert datos is None and sol.ruta.exists()
+
+
+class TestCliPorLlave:
+    def _cli(self, red, monkeypatch, *argv):
+        from deploycenter.agente import cli as cli_mod
+        real = con.ClienteHub
+
+        def cliente_en_memoria(url, token=None, ca=None, permitir_http=False, **_kw):
+            return real(url, token=token, transporte=red)
+        monkeypatch.setattr(con, "ClienteHub", cliente_en_memoria)
+        return cli_mod.main(["--sin-color", *argv])
+
+    def test_solicitar_toma_la_configuracion_del_entorno(self, hub, red, tmp_path,
+                                                          monkeypatch, capsys):
+        llave = hub.emitir_llave("andino", "producción")["llave"]
+        for k, v in {"DC_HUB_URL": URL, "DC_CLIENTE": "andino", "DC_LLAVE": llave,
+                     "DC_AMBIENTE": "homologacion", "DC_HOST": "srv-homo-01"}.items():
+            monkeypatch.setenv(k, v)
+        trabajo = str(tmp_path / "trabajo")
+        assert self._cli(red, monkeypatch, "solicitar", "--trabajo", trabajo,
+                         "--no-esperar") == 0
+        assert "pendiente" in capsys.readouterr().out
+        (sol,) = hub.solicitudes(estado="pendiente")
+        assert (sol["host"], sol["ambiente"]) == ("srv-homo-01", "homologacion")
+
+        hub.resolver_solicitud(sol["id"], True)
+        assert self._cli(red, monkeypatch, "solicitar", "--trabajo", trabajo,
+                         "--no-esperar") == 0
+        assert "conectado como ag-" in capsys.readouterr().out
+        # ya conectado: no vuelve a pedir
+        assert self._cli(red, monkeypatch, "solicitar", "--trabajo", trabajo) == 1
+
+    def test_conectar_sin_credenciales_ni_llave(self, red, tmp_path, monkeypatch, capsys):
+        for k in ("DC_HUB_URL", "DC_CLIENTE", "DC_LLAVE", "DC_AMBIENTE"):
+            monkeypatch.delenv(k, raising=False)
+        assert self._cli(red, monkeypatch, "conectar", "--raiz", str(tmp_path),
+                         "--trabajo", str(tmp_path / "t"), "--sin-firma") == 2
+        salida = capsys.readouterr().out
+        assert "DC_LLAVE" in salida and "DC_AMBIENTE" in salida
+
+    def test_conectar_rechazado(self, hub, red, tmp_path, monkeypatch, capsys):
+        llave = hub.emitir_llave("andino", "producción")["llave"]
+        trabajo = str(tmp_path / "trabajo")
+        args = ["--hub", URL, "--cliente", "andino", "--llave", llave,
+                "--ambiente", "produccion", "--trabajo", trabajo]
+        self._cli(red, monkeypatch, "solicitar", *args, "--no-esperar")
+        (sol,) = hub.solicitudes(estado="pendiente")
+        hub.resolver_solicitud(sol["id"], False)
+        assert self._cli(red, monkeypatch, "conectar", "--raiz", str(tmp_path),
+                         "--sin-firma", "--intervalo", "0", *args) == 1
+        assert "rechazó" in capsys.readouterr().out

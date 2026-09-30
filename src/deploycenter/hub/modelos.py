@@ -86,12 +86,52 @@ class CodigoEnrolamiento(Base):
     agente_id: Mapped[str | None] = mapped_column(String(40))
 
 
+class LlaveEnrolamiento(Base):
+    """Llave que comparten la web y los agentes de un cliente. Con ella un agente
+    pide conectarse; la conexión recién existe cuando Soporte acepta el pedido.
+    Se guarda el hash; el prefijo sirve para reconocerla en pantalla."""
+
+    __tablename__ = "llaves_enrolamiento"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"))
+    nombre: Mapped[str] = mapped_column(String(100))
+    prefijo: Mapped[str] = mapped_column(String(12))
+    # diferido: la web no tiene permiso sobre esta columna
+    hash: Mapped[str] = mapped_column(String(64), unique=True, deferred=True)
+    creada: Mapped[datetime.datetime] = mapped_column(DateTime)
+    revocada: Mapped[datetime.datetime | None] = mapped_column(DateTime)
+
+
+class SolicitudAgente(Base):
+    """Un agente que se presentó con la llave de su cliente y espera que lo acepten."""
+
+    __tablename__ = "solicitudes_agente"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"))
+    llave_id: Mapped[int] = mapped_column(ForeignKey("llaves_enrolamiento.id"))
+    host: Mapped[str] = mapped_column(String(200))
+    ambiente: Mapped[str] = mapped_column(String(30))
+    version: Mapped[str | None] = mapped_column(String(40))
+    ip: Mapped[str | None] = mapped_column(String(64))
+    # con este secreto el agente consulta su pedido; tampoco lo lee la web
+    secreto_hash: Mapped[str] = mapped_column(String(64), unique=True, deferred=True)
+    # pendiente | aceptada | rechazada | conectada | vencida | reemplazada
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente")
+    creada: Mapped[datetime.datetime] = mapped_column(DateTime)
+    resuelta: Mapped[datetime.datetime | None] = mapped_column(DateTime)
+    resuelta_por: Mapped[str | None] = mapped_column(String(200))
+    agente_id: Mapped[str | None] = mapped_column(String(40))
+
+
 class Agente(Base):
     __tablename__ = "agentes"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"))
     host: Mapped[str] = mapped_column(String(200))
+    ambiente: Mapped[str | None] = mapped_column(String(30))
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, deferred=True)
     version: Mapped[str | None] = mapped_column(String(40))
     estado: Mapped[str] = mapped_column(String(20), default="activo")  # activo | revocado

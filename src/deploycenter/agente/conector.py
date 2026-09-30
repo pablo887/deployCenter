@@ -1,6 +1,7 @@
 """Modo conectado: el agente sale a buscar trabajo al hub.
 
-    enrolar ─▶ credenciales propias (token, nunca la clave de la base)
+    pedido con la llave del cliente ─▶ Soporte lo acepta en la web
+                                    ─▶ credenciales propias (token, nunca la clave de la base)
     ciclo:  vaciar el buzón → latido → long-poll de órdenes → ejecutar → resultado
 
 Todo el tráfico lo inicia el agente, por 443 y a un solo dominio. Respeta el
@@ -128,9 +129,9 @@ class ClienteHub:
         self.token = token
         self.transporte = transporte or transporte_urllib(ca)
 
-    def _pedir(self, metodo, ruta, cuerpo=None, timeout=TIMEOUT_NORMAL_S):
+    def _pedir(self, metodo, ruta, cuerpo=None, timeout=TIMEOUT_NORMAL_S, extra=None):
         cabeceras = {"Accept": "application/json",
-                     "User-Agent": f"deploycenter-agente/{__version__}"}
+                     "User-Agent": f"deploycenter-agente/{__version__}", **(extra or {})}
         if cuerpo is not None:
             cabeceras["Content-Type"] = "application/json"
         if self.token:
@@ -148,6 +149,17 @@ class ClienteHub:
     def enrolar(self, codigo, host, version=__version__):
         _, datos = self._pedir("POST", "/api/agente/v1/enrolar",
                                {"codigo": codigo, "host": host, "version": version})
+        return datos
+
+    def solicitar_conexion(self, cliente, llave, host, ambiente, version=__version__):
+        _, datos = self._pedir("POST", "/api/agente/v1/solicitudes",
+                               {"cliente": cliente, "llave": llave, "host": host,
+                                "ambiente": ambiente, "version": version})
+        return datos
+
+    def consultar_solicitud(self, solicitud_id, secreto):
+        _, datos = self._pedir("GET", f"/api/agente/v1/solicitudes/{solicitud_id}",
+                               extra={"X-DC-Solicitud": secreto})
         return datos
 
     def latido(self, instalaciones, version=__version__):
@@ -191,22 +203,131 @@ class Credenciales:
     def existe(self):
         return self.ruta.is_file()
 
-    def guardar(self, hub, agente_id, token, tenant):
-        self.ruta.parent.mkdir(parents=True, exist_ok=True)
-        contenido = json.dumps({"hub": hub, "agente_id": agente_id, "token": token,
-                                "tenant": tenant, "enrolado": ahora()}, indent=2)
-        temporal = self.ruta.with_suffix(".tmp")
-        fd = os.open(str(temporal), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(contenido + "\n")
-        os.replace(temporal, self.ruta)
-        return self.ruta
+    def guardar(self, hub, agente_id, token, tenant, ambiente=None):
+        datos = {"hub": hub, "agente_id": agente_id, "token": token, "tenant": tenant,
+                 "enrolado": ahora()}
+        if ambiente:
+            datos["ambiente"] = ambiente
+        return _escribir_privado(self.ruta, datos)
 
     def cargar(self):
         if not self.existe():
             raise ErrorDeployCenter(
                 f"no hay credenciales en {self.ruta}: primero 'dc-agent enrolar'")
         return json.loads(self.ruta.read_text(encoding="utf-8"))
+
+
+def _escribir_privado(ruta, datos):
+    """Escribe JSON legible solo por el usuario del agente, sin dejarlo a medias."""
+    ruta = Path(ruta)
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    temporal = ruta.with_suffix(".tmp")
+    fd = os.open(str(temporal), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(datos, indent=2) + "\n")
+    os.replace(temporal, ruta)
+    return ruta
+
+
+# --------------------------------------------------------------------------- #
+# enrolamiento por llave: el agente pide y espera que lo acepten
+# --------------------------------------------------------------------------- #
+
+INTERVALO_SOLICITUD_S = 15
+
+
+class ConexionRechazada(ErrorDeployCenter):
+    """Soporte rechazó el pedido, o la llave no sirve para ese cliente."""
+
+
+class Solicitud:
+    """El pedido en curso, en disco: si el agente se reinicia mientras espera, sigue
+    esperando el mismo pedido en vez de crear otro."""
+
+    def __init__(self, ruta):
+        self.ruta = Path(ruta)
+
+    def cargar(self):
+        if not self.ruta.is_file():
+            return None
+        try:
+            return json.loads(self.ruta.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def guardar(self, datos):
+        return _escribir_privado(self.ruta, datos)
+
+    def borrar(self):
+        self.ruta.unlink(missing_ok=True)
+
+
+def conectar_por_llave(cliente_hub, credenciales, solicitud, hub, cliente, llave, host,
+                       ambiente, intervalo_s=INTERVALO_SOLICITUD_S, dormir=time.sleep,
+                       avisar=lambda texto: None, intentos=None):
+    """Pide la conexión (o retoma el pedido guardado) y espera a que Soporte lo
+    acepte. Devuelve las credenciales guardadas. `intentos` acota las consultas,
+    para las pruebas y para `--no-esperar`."""
+    actual = solicitud.cargar()
+    if actual and (actual.get("hub") != hub or actual.get("cliente") != cliente
+                   or actual.get("ambiente") != ambiente or actual.get("host") != host):
+        # cambió la configuración: el pedido guardado ya no es este
+        solicitud.borrar()
+        actual = None
+
+    consultas = 0
+    pausa = intervalo_s
+    while True:
+        if actual is None:
+            try:
+                datos = cliente_hub.solicitar_conexion(cliente, llave, host, ambiente)
+            except CredencialesInvalidas as e:
+                raise ConexionRechazada(e.mensaje) from None
+            actual = {"hub": hub, "cliente": cliente, "ambiente": ambiente, "host": host,
+                      "solicitud": datos["solicitud"], "secreto": datos["secreto"],
+                      "pedida": ahora()}
+            solicitud.guardar(actual)
+            avisar(f"pedido {datos['solicitud']} enviado: esperando que Soporte lo acepte")
+
+        try:
+            estado = cliente_hub.consultar_solicitud(actual["solicitud"], actual["secreto"])
+            pausa = intervalo_s
+        except CredencialesInvalidas:
+            # el hub no conoce el pedido (se borró la base, otro hub): se pide de nuevo
+            solicitud.borrar()
+            actual = None
+            continue
+        except ErrorConexion as e:
+            avisar(f"el hub no responde ({e}); se reintenta")
+            estado = {"estado": "sin_respuesta"}
+            pausa = min(pausa * 2, BACKOFF_MAXIMO_S * 5)
+
+        situacion = estado.get("estado")
+        if situacion == "conectada":
+            credenciales.guardar(hub, estado["agente_id"], estado["token"], estado["tenant"],
+                                 ambiente=ambiente)
+            solicitud.borrar()
+            avisar(f"aceptado: conectado como {estado['agente_id']}")
+            return credenciales.cargar()
+        if situacion == "rechazada":
+            solicitud.borrar()
+            raise ConexionRechazada(
+                "Soporte rechazó el pedido de conexión de este servidor")
+        if situacion == "reemplazada":
+            solicitud.borrar()
+            raise ConexionRechazada(
+                "otro agente con el mismo host y ambiente pidió conexión después que "
+                "este; queda el pedido más reciente")
+        if situacion == "vencida":
+            avisar("el pedido venció sin respuesta; se pide de nuevo")
+            solicitud.borrar()
+            actual = None
+            continue
+
+        consultas += 1
+        if intentos is not None and consultas >= intentos:
+            return None
+        dormir(pausa)
 
 
 # --------------------------------------------------------------------------- #

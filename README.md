@@ -360,7 +360,8 @@ remoto: deja la orden encolada y es el agente el que sale a buscarla.
 
 ```
 agente (servidor del cliente)                      hub (nube de Accusys)
-  │  POST /api/agente/v1/enrolar  código de un uso ──▶ token propio; el hub guarda el hash
+  │  POST /api/agente/v1/solicitudes  cliente + llave + ambiente ──▶ pedido pendiente
+  │  GET  /api/agente/v1/solicitudes/{id}  (cada 15 s)  ◀── cuando Soporte lo acepta: token propio
   │  POST /api/agente/v1/latido   inventario       ──▶ parque: qué corre dónde
   │  GET  /api/agente/v1/ordenes/siguiente  (long-poll 25 s) ◀── orden + paquete
   │  POST /api/agente/v1/ordenes/{id}/eventos  logs ──▶ la respuesta trae "cancelar rollback"
@@ -370,11 +371,46 @@ agente (servidor del cliente)                      hub (nube de Accusys)
 Todo lo inicia el agente, por 443, hacia un solo dominio. No hay puertos
 entrantes ni VPN.
 
+**El alta la inicia el agente.** Soporte genera en la web la llave de cada
+cliente (*Agentes → Llaves de enrolamiento*). En el servidor se configuran hub,
+cliente, llave y ambiente, y el agente pide conectarse. El pedido aparece en
+*Agentes → Pedidos de conexión* con host, cliente, ambiente, IP de origen y
+versión; recién cuando Soporte lo acepta, el agente recibe su token.
+
+- **La llave sola no conecta nada:** sirve para que el pedido llegue a la cola
+  del cliente correcto. El hub guarda el hash.
+- **Un pedido con una llave que no es del cliente, revocada o inventada, o de un
+  cliente suspendido,** recibe siempre el mismo error.
+- **El token se entrega una sola vez, a quien tiene el secreto del pedido** (el
+  agente lo guarda en `solicitud.json`, 0600). Si el agente se reinicia mientras
+  espera, sigue esperando el mismo pedido.
+- **El mismo host y ambiente que vuelve a pedir reemplaza su pedido anterior.**
+  Hay un tope de 20 pendientes por llave, y un pedido vence a la semana sin
+  respuesta.
+- **Revocar la llave rechaza sus pendientes** y no desconecta a los agentes ya
+  aceptados, que tienen su propio token.
+- **Con la RLS, la llave la ven y la administran solo Accusys, y el pedido lo
+  resuelve solo Soporte.** El cliente ve los pedidos de sus servidores. Desde la
+  web no se puede marcar un pedido como conectado: el agente lo crea el hub.
+
 ```bash
-# agente (en el servidor del cliente)
-dc-agent enrolar  --hub https://deploy.accusys.com.ar --codigo DC-XXXX-XXXX
+# agente (en el servidor del cliente): con DC_HUB_URL, DC_CLIENTE, DC_LLAVE y
+# DC_AMBIENTE en el entorno, `conectar` pide solo la primera vez y espera
 dc-agent conectar --raiz /opt/accusys --clave-publica /etc/deploycenter/cosign.pub
+
+# o en dos pasos
+dc-agent solicitar --hub https://deploy.accusys.com.ar --cliente andino \
+  --llave DCK-XXXX-XXXX-XXXX-XXXX-XXXX --ambiente produccion
+dc-agent conectar  --raiz /opt/accusys --clave-publica /etc/deploycenter/cosign.pub
+
+# consola del hub, lo mismo que la web
+dc-hub llave andino --nombre "Servidores de producción"
+dc-hub solicitudes --estado pendiente
+dc-hub aceptar sol-…
 ```
+
+El alta vieja por código de un solo uso (`dc-hub codigo` + `dc-agent enrolar`)
+sigue funcionando para la demo y los scripts. La web ya no la ofrece.
 
 `ejemplos/agente-conectado-compose.yml` es el compose de referencia para dejar
 el agente levantado en el cliente.
@@ -514,7 +550,8 @@ docker compose exec hub dc-hub usuario <uuid> --rol comercial --email vos@accusy
 ```
 
 Desde ahí, Comercial crea los clientes, sus productos y sus usuarios desde la
-web; Soporte emite los códigos para enrolar agentes.
+web; Soporte genera las llaves de enrolamiento y acepta los pedidos de conexión de
+los agentes.
 
 Para ver un despliegue real sin salir de tu máquina, el perfil `agente-demo`
 suma un agente y un producto de prueba (nginx, con un release roto a propósito
@@ -533,7 +570,8 @@ HTML, CSS y JS estáticos, sin build. Tiene dos modos:
   preflight muestra las comprobaciones que devolvió, el despliegue sigue los
   eventos que manda, y la vuelta atrás se puede cancelar mientras corre. El
   Aprobador habilita a Accusys por un plazo; Comercial carga clientes,
-  productos y usuarios; Soporte emite códigos de enrolamiento y revoca agentes.
+  productos y usuarios; Soporte genera las llaves de enrolamiento, acepta o
+  rechaza los pedidos de conexión de los agentes y revoca agentes.
   La sesión vive en `sessionStorage` y el hub manda una CSP que no deja cargar
   scripts de otro origen.
 - **Maqueta**: abierta sola, sin hub, con datos ficticios y estado en
@@ -623,7 +661,10 @@ que no pasa por ahí no llega a main.
       `.env` del servidor sin que el valor pase por el hub
 - [ ] Órdenes entregadas sin respuesta: si el agente muere después de tomar
       una orden, queda `entregada`. Falta marcarla vencida pasado un plazo.
-- [ ] Límite de intentos en el enrolamiento (en el proxy de entrada)
+- [x] Enrolamiento al revés: el agente se presenta con la llave del cliente y
+      su ambiente, y Soporte acepta el pedido en la web
+- [ ] Límite de intentos en el enrolamiento y en los pedidos de conexión (en el
+      proxy de entrada)
 - [x] Imagen del hub (`Dockerfile.hub`) y `docker-compose.yml` para levantarlo
 - [ ] Despliegue del hub en la nube de Accusys, con TLS y el dominio propio
 - [x] Web conectada: login con TOTP, parque, catálogo, órdenes reales con sus

@@ -22,6 +22,7 @@ Todo lo que decide qué se le puede pedir a un agente está acá:
 import datetime
 import hashlib
 import json
+import re
 import secrets
 import uuid
 from contextlib import contextmanager
@@ -40,6 +41,11 @@ from .catalogo import Catalogo
 # apareció, está fuera de línea y el hub bloquea las órdenes para ese host.
 UMBRAL_EN_LINEA_S = 90
 VIGENCIA_CODIGO_H = 24
+# un pedido de conexión que nadie resuelve en una semana se da por vencido
+VIGENCIA_SOLICITUD_H = 7 * 24
+# tope de pedidos pendientes por llave: quien tenga la llave no puede llenar la cola
+MAX_SOLICITUDES_PENDIENTES = 20
+RE_AMBIENTE = re.compile(r"^[a-z0-9][a-z0-9-]{1,29}$")
 MAX_EVENTOS_POR_ENVIO = 500
 
 # sin 0/O ni 1/I/L: el código se dicta por teléfono
@@ -375,6 +381,190 @@ class Hub:
             tenant_id = registro.tenant_id
         return {"agente_id": agente_id, "token": token, "tenant": tenant_id}
 
+    # ------------------------------------------------------------------ #
+    # enrolamiento por llave: el agente se presenta, Soporte lo acepta
+    # ------------------------------------------------------------------ #
+
+    def emitir_llave(self, tenant_id, nombre, perfil=None):
+        """Llave de enrolamiento de un cliente. Se devuelve en claro una sola vez."""
+        self._exigir(perfil, "soporte")
+        nombre = (nombre or "").strip()
+        if not nombre or len(nombre) > 100:
+            raise Rechazado("la llave necesita un nombre de hasta 100 caracteres")
+        cuerpo = "".join(secrets.choice(ALFABETO_CODIGO) for _ in range(20))
+        llave = "DCK-" + "-".join(cuerpo[i:i + 4] for i in range(0, 20, 4))
+        with self.sesion(perfil) as s:
+            self._tenant(s, tenant_id)
+            registro = m.LlaveEnrolamiento(
+                tenant_id=tenant_id, nombre=nombre, prefijo=llave[:8],
+                hash=hash_secreto(normalizar_codigo(llave)), creada=self.reloj())
+            s.add(registro)
+            s.flush()
+            self._auditar(s, perfil, "llave_emitida", tenant_id, llave=registro.id,
+                          nombre=nombre)
+            return {**self._llave_a_dict(registro), "llave": llave}
+
+    def llaves(self, tenant_id, perfil=None):
+        self._exigir(perfil, "soporte", "comercial", "publicador")
+        with self.sesion(perfil) as s:
+            self._tenant(s, tenant_id)
+            return [self._llave_a_dict(llave) for llave in s.scalars(
+                select(m.LlaveEnrolamiento).where(m.LlaveEnrolamiento.tenant_id == tenant_id)
+                .order_by(m.LlaveEnrolamiento.id))]
+
+    def revocar_llave(self, llave_id, perfil=None):
+        """Una llave revocada no admite pedidos nuevos. Los agentes que ya se
+        conectaron con ella siguen: tienen su propio token."""
+        self._exigir(perfil, "soporte")
+        with self.sesion(perfil) as s:
+            llave = s.get(m.LlaveEnrolamiento, llave_id)
+            if llave is None:
+                raise NoEncontrado(f"no existe la llave {llave_id!r}")
+            if llave.revocada is None:
+                llave.revocada = self.reloj()
+                for sol in s.scalars(select(m.SolicitudAgente).where(
+                        m.SolicitudAgente.llave_id == llave.id,
+                        m.SolicitudAgente.estado == "pendiente")):
+                    sol.estado = "rechazada"
+                    sol.resuelta = llave.revocada
+                    sol.resuelta_por = "llave revocada"
+                self._auditar(s, perfil, "llave_revocada", llave.tenant_id, llave=llave.id)
+            return self._llave_a_dict(llave)
+
+    def solicitar_conexion(self, cliente, llave, host, ambiente, version=None, ip=None):
+        """El agente se presenta. Devuelve el id del pedido y el secreto con el que
+        lo va a consultar; la conexión recién existe cuando Soporte lo acepta."""
+        host = (host or "").strip()
+        ambiente = (ambiente or "").strip().lower()
+        if not host or len(host) > 200:
+            raise Rechazado("el agente tiene que informar el nombre del host")
+        if not RE_AMBIENTE.match(ambiente):
+            raise Rechazado("el ambiente va en minúsculas, por ejemplo produccion u "
+                            "homologacion")
+        ahora = self.reloj()
+        with self.sesion() as s:
+            registro = s.scalar(select(m.LlaveEnrolamiento).where(
+                m.LlaveEnrolamiento.hash == hash_secreto(normalizar_codigo(llave))))
+            tenant = s.get(m.Tenant, cliente) if cliente else None
+            # un solo mensaje para cliente inexistente, llave ajena, revocada o
+            # cliente suspendido: no se le da pista a quien esté probando
+            if (registro is None or registro.revocada is not None or tenant is None
+                    or registro.tenant_id != tenant.id or tenant.estado != "activo"):
+                raise NoAutorizado("la llave no corresponde a ese cliente o fue revocada")
+
+            self._vencer_solicitudes(s, ahora)
+            pendientes = s.scalars(select(m.SolicitudAgente).where(
+                m.SolicitudAgente.llave_id == registro.id,
+                m.SolicitudAgente.estado == "pendiente")).all()
+            # el mismo servidor que vuelve a pedir reemplaza su pedido anterior
+            for anterior in pendientes:
+                if anterior.host == host and anterior.ambiente == ambiente:
+                    anterior.estado = "reemplazada"
+                    anterior.resuelta = ahora
+            if sum(1 for p in pendientes if p.estado == "pendiente") \
+                    >= MAX_SOLICITUDES_PENDIENTES:
+                raise Rechazado("hay demasiados pedidos pendientes con esta llave; "
+                                "que Soporte resuelva los que están esperando")
+
+            secreto = secrets.token_urlsafe(32)
+            solicitud = m.SolicitudAgente(
+                id="sol-" + uuid.uuid4().hex[:12], tenant_id=tenant.id, llave_id=registro.id,
+                host=host, ambiente=ambiente, version=version, ip=(ip or None),
+                secreto_hash=hash_secreto(secreto), estado="pendiente", creada=ahora)
+            s.add(solicitud)
+            s.add(m.Auditoria(fecha=ahora, usuario_id=None, usuario=f"agente {host}",
+                              tenant_id=tenant.id, accion="conexion_solicitada",
+                              detalle={"solicitud": solicitud.id, "ambiente": ambiente,
+                                       "llave": registro.id}))
+            return {"solicitud": solicitud.id, "secreto": secreto, "estado": "pendiente",
+                    "tenant": tenant.id}
+
+    def consultar_solicitud(self, solicitud_id, secreto):
+        """Lo que pregunta el agente mientras espera. Si lo aceptaron, en esta
+        respuesta —y solo en esta— recibe su token."""
+        with self.sesion() as s:
+            sol = s.get(m.SolicitudAgente, solicitud_id or "")
+            if sol is None or sol.secreto_hash != hash_secreto(secreto or ""):
+                raise NoAutorizado("pedido de conexión desconocido")
+            ahora = self.reloj()
+            self._vencer_solicitudes(s, ahora)
+            if sol.estado != "aceptada":
+                return {"estado": sol.estado}
+
+            token = secrets.token_urlsafe(32)
+            agente_id = "ag-" + uuid.uuid4().hex[:10]
+            s.add(m.Agente(id=agente_id, tenant_id=sol.tenant_id, host=sol.host,
+                           ambiente=sol.ambiente, token_hash=hash_secreto(token),
+                           version=sol.version, estado="activo", enrolado=ahora,
+                           ultimo_contacto=ahora))
+            sol.estado = "conectada"
+            sol.agente_id = agente_id
+            return {"estado": "conectada", "agente_id": agente_id, "token": token,
+                    "tenant": sol.tenant_id}
+
+    def solicitudes(self, tenant_id=None, estado=None, perfil=None):
+        if perfil is not None and not perfil.es_accusys:
+            tenant_id = perfil.tenant
+        with self.sesion(perfil) as s:
+            # las vencidas se calculan al leer: la web no escribe estados
+            consulta = select(m.SolicitudAgente).order_by(m.SolicitudAgente.creada.desc())
+            if tenant_id:
+                consulta = consulta.where(m.SolicitudAgente.tenant_id == tenant_id)
+            if estado:
+                consulta = consulta.where(m.SolicitudAgente.estado == estado)
+            ahora = self.reloj()
+            return [self._solicitud_a_dict(sol, ahora) for sol in s.scalars(consulta.limit(200))]
+
+    def resolver_solicitud(self, solicitud_id, aceptar, perfil=None):
+        """Soporte acepta o rechaza el pedido de un agente. Aceptar no crea el
+        agente todavía: lo crea el hub cuando el agente vuelve a preguntar, que
+        es el único que tiene el secreto para recibir el token."""
+        self._exigir(perfil, "soporte")
+        with self.sesion(perfil) as s:
+            sol = s.get(m.SolicitudAgente, solicitud_id)
+            if sol is None or not self._ve(perfil, sol.tenant_id):
+                raise NoEncontrado(f"no existe el pedido {solicitud_id!r}")
+            ahora = self.reloj()
+            if sol.estado == "pendiente" and self._solicitud_vencida(sol, ahora):
+                raise Conflicto("el pedido venció; el agente tiene que volver a pedir")
+            if sol.estado != "pendiente":
+                raise Conflicto(f"el pedido ya está {sol.estado}")
+            sol.estado = "aceptada" if aceptar else "rechazada"
+            sol.resuelta = ahora
+            sol.resuelta_por = perfil.etiqueta if perfil else CONSOLA
+            self._auditar(s, perfil, "conexion_aceptada" if aceptar else "conexion_rechazada",
+                          sol.tenant_id, solicitud=sol.id, host=sol.host, ambiente=sol.ambiente)
+            return self._solicitud_a_dict(sol, ahora)
+
+    @staticmethod
+    def _solicitud_vencida(sol, ahora):
+        return ahora - sol.creada > datetime.timedelta(hours=VIGENCIA_SOLICITUD_H)
+
+    def _vencer_solicitudes(self, s, ahora):
+        """Pendientes o aceptadas que nadie completó en la vigencia. Corre con el
+        rol dueño, desde el canal del agente."""
+        limite = ahora - datetime.timedelta(hours=VIGENCIA_SOLICITUD_H)
+        for sol in s.scalars(select(m.SolicitudAgente).where(
+                m.SolicitudAgente.estado.in_(("pendiente", "aceptada")),
+                m.SolicitudAgente.creada < limite)):
+            sol.estado = "vencida"
+
+    @staticmethod
+    def _llave_a_dict(llave):
+        return {"id": llave.id, "tenant": llave.tenant_id, "nombre": llave.nombre,
+                "prefijo": llave.prefijo, "creada": _iso(llave.creada),
+                "revocada": _iso(llave.revocada)}
+
+    def _solicitud_a_dict(self, sol, ahora):
+        estado = sol.estado
+        if estado in ("pendiente", "aceptada") and self._solicitud_vencida(sol, ahora):
+            estado = "vencida"
+        return {"id": sol.id, "tenant": sol.tenant_id, "llave": sol.llave_id,
+                "host": sol.host, "ambiente": sol.ambiente, "version": sol.version,
+                "ip": sol.ip, "estado": estado, "creada": _iso(sol.creada),
+                "resuelta": _iso(sol.resuelta), "resuelta_por": sol.resuelta_por,
+                "agente": sol.agente_id}
+
     def autenticar(self, token):
         """Resuelve el token de un agente. Cada llamada autenticada cuenta como contacto."""
         if not token:
@@ -598,6 +788,7 @@ class Hub:
                     m.Instalacion.agente_id == agente.id).order_by(m.Instalacion.nombre))
                 salida.append({
                     "id": agente.id, "tenant": agente.tenant_id, "host": agente.host,
+                    "ambiente": agente.ambiente,
                     "version": agente.version, "estado": agente.estado,
                     "en_linea": self.en_linea(agente),
                     "ultimo_contacto": _iso(agente.ultimo_contacto),

@@ -15,6 +15,8 @@
      Estado
      ============================================================ */
   let S = cargar() || nuevo();
+  // un estado guardado antes de que existieran las llaves sigue sirviendo
+  if (!S.llaves) { S.llaves = JSON.parse(JSON.stringify(SEED.llaves || [])); S.solicitudes = JSON.parse(JSON.stringify(SEED.solicitudes || [])); }
   let DEP = null;          // despliegue en curso (runtime, no se persiste)
   let DEPH = null;         // modo hub: la orden real que se está siguiendo
   let UI = { vista: '', inst: null, prod: null, tenantParam: null, prodRel: null, login: { user: 'u1', paso: 1 }, drawer: null, modal: null, perfil: false, menu: false, colapsado: (() => { try { return localStorage.getItem('dc-side-colapsado') === '1'; } catch (e) { return false; } })(), filtroAud: { tenant: '', tipo: '' }, filtroUsu: '' };
@@ -892,7 +894,7 @@
     parque: { titulo: 'Tablero de parque', icono: I.grid, render: vParque },
     parametria: { titulo: 'Parametría', icono: I.sliders, render: vParametria },
     releases: { titulo: 'Releases', icono: I.tag, render: vReleases },
-    agentes: { titulo: 'Agentes', icono: I.cpu, render: vAgentes, cuenta: () => S.agentes.filter(a => a.estado !== 'online').length || '' },
+    agentes: { titulo: 'Agentes', icono: I.cpu, render: vAgentes, cuenta: () => (S.solicitudes.filter(x => x.estado === 'pendiente').length + S.agentes.filter(a => a.estado === 'offline').length) || '' },
     usuarios: { titulo: 'Usuarios de clientes', icono: I.users, render: vUsuariosClientes },
     auditoria: { titulo: 'Auditoría', icono: I.list, render: vAuditoria }
   };
@@ -1050,21 +1052,30 @@
   }
 
   function vAgentes() {
+    const soporte = usuarioActual().rol === 'soporte';
+    const pendientes = S.solicitudes.filter(x => x.estado === 'pendiente');
     const filas = S.agentes.map(a => {
       const stacks = S.instalaciones.filter(i => i.agente === a.id).map(i => prod(i.producto).codigo);
-      const est = { online: '<span class="pill p-ok">En línea</span>', offline: '<span class="pill p-crit">Fuera de línea</span>', revocado: '<span class="pill p-neutro">Revocado</span>', pendiente: '<span class="pill p-warn">Esperando canje</span>' }[a.estado];
+      const est = { online: '<span class="pill p-ok">En línea</span>', offline: '<span class="pill p-crit">Fuera de línea</span>', revocado: '<span class="pill p-neutro">Revocado</span>' }[a.estado];
       return `<tr><td><code>${esc(a.host)}</code><span class="sub">${esc(a.id)}</span></td><td>${esc((tenant(a.tenant) || { nombre: a.tenant }).nombre)}</td>
+        <td>${a.ambiente ? amb(a.ambiente) : '<span class="suave">—</span>'}</td>
         <td>${est}</td><td class="num">${esc(a.visto)}</td>
-        <td class="num">${esc(a.version)} ${MODO !== 'hub' && a.version !== AGENTE_ULTIMA && a.estado !== 'pendiente' ? '<span class="pill p-warn">desactualizado</span>' : ''}</td>
+        <td class="num">${esc(a.version)} ${MODO !== 'hub' && a.version !== AGENTE_ULTIMA ? '<span class="pill p-warn">desactualizado</span>' : ''}</td>
         <td>${stacks.map(s => `<span class="tag-prod">${s}</span>`).join(' ') || '<span class="suave">—</span>'}</td>
-        <td>${a.estado === 'pendiente' ? `<button class="btn btn-sec btn-chico" data-a="canjear" data-id="${a.id}">Simular canje</button>` : a.estado !== 'revocado' ? `<button class="btn btn-fantasma btn-chico" data-a="pedir-revocar" data-id="${a.id}">Revocar</button>` : ''}</td></tr>`;
+        <td>${a.estado !== 'revocado' && soporte ? `<button class="btn btn-fantasma btn-chico" data-a="pedir-revocar" data-id="${a.id}">Revocar</button>` : ''}</td></tr>`;
     }).join('');
+    const pedidos = pendientes.map(x => `<tr><td><code>${esc(x.host)}</code><span class="sub">${esc(x.id)}</span></td>
+        <td>${esc((tenant(x.tenant) || { nombre: x.tenant }).nombre)}</td><td>${amb(x.ambiente)}</td>
+        <td class="num"><code class="chico">${esc(x.ip)}</code></td><td class="num">${esc(x.version)}</td><td class="num">${esc(x.creada)}</td>
+        <td class="fila">${soporte ? `<button class="btn btn-pri btn-chico" data-a="aceptar-solicitud" data-id="${x.id}">Aceptar</button><button class="btn btn-fantasma btn-chico" data-a="rechazar-solicitud" data-id="${x.id}">Rechazar</button>` : '<span class="suave chico">Lo resuelve Soporte</span>'}</td></tr>`).join('');
     return `
       <div class="cabecera"><div class="t"><span class="eyebrow">Agentes</span><h1>Un agente por host, todos los productos del host</h1>
-      <p>Conexión siempre saliente por 443. Alta con código de un solo uso; baja revocando el token y la credencial del registry, sin tocar el servidor.</p></div>
-      <button class="btn btn-pri" data-a="enrolar">${I.plus} Enrolar servidor</button></div>
-      <section class="panel"><div class="tabla-wrap"><table><thead><tr><th>Host</th><th>Cliente</th><th>Estado</th><th>Último contacto</th><th>Versión</th><th>Stacks</th><th></th></tr></thead><tbody>${filas}</tbody></table></div></section>
-      <div class="aviso a-info">${I.shield}<div><b>Catálogo cerrado de operaciones:</b> pull, up, down, logs y rollback, sobre los stacks de Accusys y con imágenes de <code>registry.accusys.com.ar</code>. No existe un shell remoto.</div></div>`;
+      <p>El agente se instala con la llave de su cliente y pide conectarse; queda esperando hasta que Soporte acepta el pedido acá. Conexión siempre saliente por 443; baja revocando el token, sin tocar el servidor.</p></div>
+      <button class="btn btn-pri" data-a="enrolar">${I.plus} Llaves de enrolamiento</button></div>
+      ${pendientes.length ? `<section class="panel"><div class="panel-cab"><div><h2>Pedidos de conexión</h2><p>Revisá que el host, el cliente y el ambiente sean los esperados antes de aceptar: el agente aceptado recibe órdenes de ese cliente.</p></div></div>
+        <div class="tabla-wrap"><table><thead><tr><th>Host</th><th>Cliente</th><th>Ambiente</th><th>IP de origen</th><th>Versión</th><th>Pedido</th><th></th></tr></thead><tbody>${pedidos}</tbody></table></div></section>` : ''}
+      <section class="panel"><div class="tabla-wrap"><table><thead><tr><th>Host</th><th>Cliente</th><th>Ambiente</th><th>Estado</th><th>Último contacto</th><th>Versión</th><th>Stacks</th><th></th></tr></thead><tbody>${filas || '<tr><td colspan="8" class="vacio">Todavía no hay agentes conectados.</td></tr>'}</tbody></table></div></section>
+      <div class="aviso a-info">${I.shield}<div><b>Catálogo cerrado de operaciones:</b> pull, up, down, logs y rollback, sobre los stacks de Accusys. No existe un shell remoto.</div></div>`;
   }
 
   function vUsuariosClientes() {
@@ -1173,26 +1184,29 @@
         <div class="campo"><label for="coord-fecha">Fecha propuesta</label><input type="date" id="coord-fecha" value="2026-10-02"></div>
         <div class="campo"><label for="coord-nota">Comentario</label><textarea id="coord-nota" rows="3" style="font-family:var(--cuerpo)">Preferimos después de las 20 h.</textarea></div>`;
       pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="enviar-coordinar">Enviar pedido</button>`;
-    } else if (m.tipo === 'enrolar' && MODO === 'hub' && m.codigo) {
-      t = 'Código de enrolamiento';
-      c = `<p class="chico suave">Vale hasta ${esc(HUB.fechaLocal(m.expira))} y se usa una sola vez. El agente lo canjea por su propio token; el hub guarda solo el hash.</p>
-        <div class="codigo-enrol">${esc(m.codigo)}</div>
-        <p class="chico suave">En el servidor del cliente, con el compose del agente (<code>ejemplos/agente-conectado-compose.yml</code>):</p>
-        <div class="cmd">docker compose run --rm agente enrolar \\\n  --hub ${esc(location.origin)} --codigo ${esc(m.codigo)}${m.host ? ` --host ${esc(m.host)}` : ''}\ndocker compose up -d</div>`;
-      pie = `<button class="btn btn-sec" data-a="copiar-cmd">Copiar comando</button><button class="btn btn-pri" data-a="cerrar-modal">Listo</button>`;
+    } else if (m.tipo === 'enrolar' && m.llave) {
+      const hubUrl = MODO === 'hub' ? location.origin : 'https://deploy.accusys.com.ar';
+      t = 'Llave de enrolamiento';
+      c = `<p class="chico suave">Se ve una sola vez: el hub guarda el hash. Configurala en el agente de cada servidor de <b>${esc(tenant(m.tenant).nombre)}</b>, con su ambiente. Cada agente va a pedir conexión y aparece en <b>Agentes → Pedidos de conexión</b> hasta que lo aceptes.</p>
+        <div class="codigo-enrol" style="font-size:1.1rem">${esc(m.llave)}</div>
+        <p class="chico suave">En el servidor, en el <code>.env</code> del compose del agente (<code>ejemplos/agente-conectado-compose.yml</code>):</p>
+        <div class="cmd">DC_HUB_URL=${esc(hubUrl)}\nDC_CLIENTE=${esc(m.tenant)}\nDC_LLAVE=${esc(m.llave)}\nDC_AMBIENTE=produccion</div>
+        <p class="chico suave">y después <code>docker compose up -d</code>. El agente pide conexión y queda esperando.</p>`;
+      pie = `<button class="btn btn-sec" data-a="copiar-cmd">Copiar configuración</button>${MODO === 'hub' ? '' : '<button class="btn btn-sec" data-a="simular-pedido">Simular pedido del agente</button>'}<button class="btn btn-pri" data-a="cerrar-modal">Listo</button>`;
     } else if (m.tipo === 'enrolar') {
-      if (!m.codigo) {
-        t = 'Enrolar servidor';
-        c = `<div class="campo"><label for="enr-t">Cliente</label><select id="enr-t">${S.tenants.map(x => `<option value="${x.id}">${esc(x.nombre)}</option>`).join('')}</select></div>
-          <div class="campo"><label for="enr-host">Host</label><input type="text" id="enr-host" value="srv-dock-03.cliente.local"></div>`;
-        pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cancelar</button><button class="btn btn-pri" data-a="generar-codigo">Generar código de un solo uso</button>`;
-      } else {
-        t = 'Código de enrolamiento';
-        c = `<p class="chico suave">Vale por 24 horas y se usa una sola vez. El agente lo canjea por su propio token, que queda guardado con hash en el hub.</p>
-          <div class="codigo-enrol">${m.codigo}</div>
-          <div class="cmd">docker run -d --name deploy-agent --restart unless-stopped \\\n  -v /var/run/docker.sock:/var/run/docker.sock \\\n  -v /opt/accusys:/opt/accusys \\\n  registry.accusys.com.ar/deploy-agent:${AGENTE_ULTIMA} \\\n  enroll --hub https://deploy.accusys.com.ar --code ${m.codigo}</div>`;
-        pie = `<button class="btn btn-sec" data-a="copiar-cmd">Copiar comando</button><button class="btn btn-pri" data-a="cerrar-modal">Listo</button>`;
-      }
+      const tid = m.tenant || (S.tenants[0] || {}).id || '';
+      const soporte = usuarioActual().rol === 'soporte';
+      const llaves = MODO === 'hub' ? (m.llaves || []) : S.llaves.filter(x => x.tenant === tid);
+      t = 'Llaves de enrolamiento';
+      c = `<p class="chico suave">Cada cliente tiene su llave. El agente la usa para pedir conexión; la conexión recién existe cuando Soporte acepta el pedido. Revocar una llave no desconecta a los agentes ya aceptados: solo impide pedidos nuevos.</p>
+        <div class="campo"><label for="enr-t">Cliente</label><select id="enr-t" data-f="llaves-t">${S.tenants.map(x => `<option value="${x.id}" ${x.id === tid ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select></div>
+        ${m.cargando ? '<p class="suave chico">Cargando llaves…</p>' : `<div class="tabla-wrap"><table><thead><tr><th>Nombre</th><th>Prefijo</th><th>Creada</th><th>Estado</th><th></th></tr></thead><tbody>
+          ${llaves.map(k => `<tr><td>${esc(k.nombre)}</td><td><code>${esc(k.prefijo)}…</code></td><td class="num">${esc(MODO === 'hub' ? HUB.fechaLocal(k.creada) : k.creada)}</td>
+            <td>${k.revocada ? '<span class="pill p-neutro">Revocada</span>' : '<span class="pill p-ok">Vigente</span>'}</td>
+            <td>${!k.revocada && soporte ? `<button class="btn btn-fantasma btn-chico" data-a="revocar-llave" data-id="${k.id}">Revocar</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="vacio">Este cliente todavía no tiene llaves.</td></tr>'}
+        </tbody></table></div>`}
+        <div class="campo"><label for="enr-nombre">Nombre de la llave nueva</label><input type="text" id="enr-nombre" value="Servidores de ${esc((tenant(tid) || {}).nombre || '')}" maxlength="100"></div>`;
+      pie = `<button class="btn btn-sec" data-a="cerrar-modal">Cerrar</button><button class="btn btn-pri" data-a="generar-llave" ${soporte ? '' : 'disabled title="Las llaves las genera Soporte"'}>Generar llave</button>`;
     } else if (m.tipo === 'revocar') {
       const a = agente(m.id);
       t = 'Revocar agente';
@@ -1246,7 +1260,7 @@
      ============================================================ */
   function vacio() {
     return { hoy: new Date().toISOString().slice(0, 10), sesion: null, productos: [], releases: {}, tenants: [], agentes: [], instalaciones: [],
-      usuarios: [], historial: [], auditoria: [], mails: [], ordenes: [], habilitaciones: [], manifiestos: {} };
+      usuarios: [], historial: [], auditoria: [], mails: [], ordenes: [], habilitaciones: [], manifiestos: {}, llaves: [], solicitudes: [] };
   }
 
   function vistaLoginHub() {
@@ -1323,6 +1337,15 @@
         S = vacio(); UI.loginHub = { paso: 'credenciales', error: 'La sesión venció: volvé a ingresar.' }; render();
       } else if (!silencioso) toast(e.message, true);
     } finally { refrescando = false; }
+  }
+
+  // las llaves no viajan en la carga general: se piden al abrir el modal
+  function cargarLlaves(tid) {
+    UI.modal = { tipo: 'enrolar', tenant: tid, cargando: true }; render();
+    if (!tid) { UI.modal.cargando = false; render(); return; }
+    llamar('GET', `/tenants/${encodeURIComponent(tid)}/llaves`).then(r => {
+      if (UI.modal && UI.modal.tipo === 'enrolar' && UI.modal.tenant === tid) { UI.modal = { tipo: 'enrolar', tenant: tid, llaves: r }; render(); }
+    }).catch(() => { if (UI.modal) { UI.modal.cargando = false; UI.modal.llaves = []; render(); } });
   }
 
   async function llamar(metodo, ruta, cuerpo, ok) {
@@ -1521,10 +1544,17 @@
       const p = $('#nuevo-prod').value, hasta = new Date(Date.now() + 365 * 864e5).toISOString().slice(0, 10);
       llamar('PUT', `/tenants/${encodeURIComponent(UI.tenantParam)}/productos/${encodeURIComponent(p)}`, { mantenimiento_hasta: hasta, autoservicio: true, canal: 'estable' }, `${prod(p).nombre} agregado`).then(() => recargar()).catch(() => {});
     },
-    'generar-codigo': () => {
-      const t = $('#enr-t').value, host = $('#enr-host').value.trim() || null;
-      llamar('POST', `/tenants/${encodeURIComponent(t)}/codigos`, { host }).then(r => { UI.modal = { tipo: 'enrolar', codigo: r.codigo, expira: r.expira, host }; render(); recargar(true); }).catch(() => {});
+    'enrolar': () => cargarLlaves((S.tenants[0] || {}).id),
+    'generar-llave': () => {
+      const t = $('#enr-t').value, nombre = $('#enr-nombre').value.trim();
+      llamar('POST', `/tenants/${encodeURIComponent(t)}/llaves`, { nombre }).then(r => { UI.modal = { tipo: 'enrolar', llave: r.llave, tenant: t }; render(); recargar(true); }).catch(() => {});
     },
+    'revocar-llave': d => {
+      const t = UI.modal.tenant;
+      llamar('POST', `/llaves/${encodeURIComponent(d.id)}/revocar`, null, 'Llave revocada').then(() => { cargarLlaves(t); recargar(true); }).catch(() => {});
+    },
+    'aceptar-solicitud': d => llamar('POST', `/solicitudes/${encodeURIComponent(d.id)}/aceptar`, null, 'Pedido aceptado: el agente se conecta en su próxima consulta').then(() => recargar()).catch(() => {}),
+    'rechazar-solicitud': d => llamar('POST', `/solicitudes/${encodeURIComponent(d.id)}/rechazar`, null, 'Pedido rechazado').then(() => recargar()).catch(() => {}),
     'revocar': d => llamar('POST', `/agentes/${encodeURIComponent(d.id)}/revocar`, null, 'Agente revocado').then(() => { UI.modal = null; recargar(); }).catch(() => {}),
     'habilitar': () => {
       const horas = parseInt($('#hab-horas').value, 10);
@@ -1735,20 +1765,42 @@
       UI.prodRel = m.producto; UI.drawer = null; guardar(); render();
       toast(`${prod(m.producto).nombre} ${r.version} publicado · aviso a ${destinos.length} clientes`);
     },
-    'enrolar': () => { UI.modal = { tipo: 'enrolar' }; render(); },
-    'generar-codigo': () => {
-      const t = $('#enr-t').value, host = $('#enr-host').value.trim() || 'srv-nuevo';
-      const cod = 'DC-' + Math.random().toString(36).slice(2, 6).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
-      S.agentes.push({ id: 'ag-' + t + '-' + Date.now().toString(36).slice(-3), tenant: t, host, version: AGENTE_ULTIMA, estado: 'pendiente', visto: 'nunca', disco: 60 });
-      auditar(`Código de enrolamiento emitido para ${host}`, t);
-      UI.modal = { tipo: 'enrolar', codigo: cod }; guardar(); render();
+    'enrolar': () => { UI.modal = { tipo: 'enrolar', tenant: (S.tenants[0] || {}).id }; render(); },
+    'generar-llave': () => {
+      const t = $('#enr-t').value, nombre = $('#enr-nombre').value.trim() || 'Servidores';
+      const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', bloque = () => Array.from({ length: 4 }, () => abc[Math.floor(Math.random() * abc.length)]).join('');
+      const llave = ['DCK', bloque(), bloque(), bloque(), bloque(), bloque()].join('-');
+      S.llaves.push({ id: Date.now(), tenant: t, nombre, prefijo: llave.slice(0, 8), creada: new Date().toISOString().slice(0, 16).replace('T', ' '), revocada: null });
+      auditar(`Llave de enrolamiento «${nombre}» generada`, t);
+      UI.modal = { tipo: 'enrolar', llave, tenant: t }; guardar(); render();
+    },
+    'revocar-llave': d => {
+      const k = S.llaves.find(x => String(x.id) === String(d.id));
+      k.revocada = new Date().toISOString().slice(0, 16).replace('T', ' ');
+      S.solicitudes.filter(x => x.llave === k.id && x.estado === 'pendiente').forEach(x => { x.estado = 'rechazada'; });
+      auditar(`Llave de enrolamiento «${k.nombre}» revocada`, k.tenant); guardar(); render(); toast('Llave revocada');
+    },
+    'simular-pedido': () => {
+      const t = UI.modal.tenant, k = S.llaves.filter(x => x.tenant === t).pop();
+      S.solicitudes.unshift({ id: 'sol-' + Date.now().toString(16), tenant: t, llave: k && k.id, host: `srv-nuevo-${Date.now().toString(36).slice(-3)}.${t}.local`, ambiente: 'produccion', version: AGENTE_ULTIMA, ip: '190.2.33.17', estado: 'pendiente', creada: 'hace 1 s' });
+      auditar('Un agente pidió conexión (produccion)', t);
+      UI.modal = null; UI.vista = 'agentes'; location.hash = 'agentes'; guardar(); render(); toast('El agente pidió conexión: aceptalo en Pedidos de conexión');
+    },
+    'aceptar-solicitud': d => {
+      const x = S.solicitudes.find(y => y.id === d.id);
+      x.estado = 'conectada';
+      S.agentes.push({ id: 'ag-' + x.tenant + '-' + Date.now().toString(36).slice(-3), tenant: x.tenant, host: x.host, ambiente: x.ambiente, version: x.version, estado: 'online', visto: 'hace 1 s', disco: 60 });
+      auditar(`Conexión aceptada: ${x.host} (${x.ambiente})`, x.tenant); guardar(); render(); toast('Agente en línea');
+    },
+    'rechazar-solicitud': d => {
+      const x = S.solicitudes.find(y => y.id === d.id);
+      x.estado = 'rechazada'; auditar(`Conexión rechazada: ${x.host} (${x.ambiente})`, x.tenant); guardar(); render(); toast('Pedido rechazado');
     },
     'copiar-cmd': () => {
       const txt = $('.modal .cmd').textContent;
       const sel = () => { const r = document.createRange(); r.selectNodeContents($('.modal .cmd')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); };
       try { navigator.clipboard.writeText(txt).then(() => toast('Comando copiado'), () => { sel(); toast('Seleccionado: copialo con Ctrl+C'); }); } catch (e) { sel(); }
     },
-    'canjear': d => { const a = agente(d.id); a.estado = 'online'; a.visto = 'hace 1 s'; auditar(`Agente ${a.host} enrolado (código canjeado)`, a.tenant); guardar(); render(); toast('Agente en línea'); },
     'pedir-revocar': d => { UI.modal = { tipo: 'revocar', id: d.id }; render(); },
     'revocar': d => { const a = agente(d.id); a.estado = 'revocado'; a.visto = '—'; auditar(`Agente ${a.host} revocado: token y credencial del registry`, a.tenant); UI.modal = null; guardar(); render(); toast('Agente revocado'); }
   };
@@ -1762,6 +1814,7 @@
     else if (f === 'rol-usuario') { const x = S.usuarios.find(u => u.id === el.dataset.id); x.rol = el.value; guardar(); toast(`${x.nombre} ahora es ${ROLES[x.rol].nombre}`); }
     else if (f === 'aud-t') { UI.filtroAud.tenant = el.value; render(); }
     else if (f === 'usu-t') { UI.filtroUsu = el.value; render(); }
+    else if (f === 'llaves-t') { if (MODO === 'hub') cargarLlaves(el.value); else { UI.modal.tenant = el.value; render(); } }
     else if (f === 'aud-tipo') { UI.filtroAud.tipo = el.value; render(); }
     else if (f === 'param') {
       const t = tenant(UI.tenantParam), p = tp(t.id, el.dataset.p), k = el.dataset.k;

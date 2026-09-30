@@ -7,8 +7,14 @@
     dc-agent historial  --instalacion /opt/accusys/mep
     dc-agent logs       --instalacion /opt/accusys/mep --servicio api
 
-    dc-agent enrolar    --hub https://deploy.accusys.com.ar --codigo DC-XXXX-XXXX
+    dc-agent solicitar  --hub https://deploy.accusys.com.ar --cliente banco-andino \
+                        --llave DCK-XXXX-... --ambiente produccion
     dc-agent conectar   --raiz /opt/accusys --clave-publica /etc/deploycenter/cosign.pub
+    dc-agent enrolar    --hub https://deploy.accusys.com.ar --codigo DC-XXXX-XXXX
+
+`conectar` hace el pedido solo si el servidor todavía no está conectado y tiene
+hub, cliente, llave y ambiente (por parámetro o en DC_HUB_URL, DC_CLIENTE,
+DC_LLAVE y DC_AMBIENTE): pide, espera a que Soporte lo acepte y sigue.
 
 En Fase 1 el paquete lo baja una persona y el despliegue lo dispara este CLI.
 En Fase 2 el mismo motor lo dispara una orden que llega del hub: el agente no
@@ -17,6 +23,7 @@ cambia, cambia quién aprieta el botón.
 
 import argparse
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -300,17 +307,81 @@ def cmd_enrolar(args):
     return OK
 
 
+def _faltan_para_pedir(args):
+    return [n for n, v in (("--hub / DC_HUB_URL", args.hub),
+                           ("--cliente / DC_CLIENTE", args.cliente),
+                           ("--llave / DC_LLAVE", args.llave),
+                           ("--ambiente / DC_AMBIENTE", args.ambiente)) if not v]
+
+
+def _pedir_conexion(args, intentos=None):
+    """Pide la conexión con la llave y espera. Devuelve las credenciales, o None si
+    se agotaron los intentos sin respuesta."""
+    from .conector import ClienteHub, Solicitud, conectar_por_llave, host_local
+
+    _verde, _rojo, _amarillo, gris, fin = paleta(usar_color(args))
+    host = args.host or host_local()
+    cliente = ClienteHub(args.hub, ca=args.ca, permitir_http=args.permitir_http)
+    print(f"  {gris}pidiendo conexión a {args.hub} como {host} ({args.cliente}, "
+          f"{args.ambiente}){fin}", flush=True)
+    return conectar_por_llave(
+        cliente, _credenciales(args), Solicitud(Path(args.trabajo) / "solicitud.json"),
+        args.hub, args.cliente, args.llave, host, args.ambiente,
+        intervalo_s=args.intervalo, intentos=intentos,
+        avisar=lambda texto: print(f"  {gris}{texto}{fin}", flush=True))
+
+
+def cmd_solicitar(args):
+    from .conector import ConexionRechazada
+
+    verde, rojo, amarillo, _gris, fin = paleta(usar_color(args))
+    s = simbolos()
+    if _credenciales(args).existe():
+        print(f"{amarillo}{s['aviso']}{fin} este servidor ya está conectado "
+              f"({_credenciales(args).ruta})")
+        return FALLA_VALIDACION
+    faltan = _faltan_para_pedir(args)
+    if faltan:
+        print(f"{rojo}{s['mal']}{fin} falta {', '.join(faltan)}")
+        return ERROR_USO
+    try:
+        datos = _pedir_conexion(args, intentos=1 if args.no_esperar else None)
+    except ConexionRechazada as e:
+        print(f"{rojo}{s['mal']}{fin} {e}")
+        return FALLA_VALIDACION
+    except KeyboardInterrupt:  # pragma: no cover
+        print()
+        return OK
+    if datos is None:
+        print(f"{amarillo}{s['aviso']}{fin} pedido pendiente: falta que Soporte lo acepte "
+              f"en la web. Volvé a correr esto, o 'conectar', para seguir esperando.")
+        return OK
+    print(f"{verde}{s['ok']}{fin} conectado como {datos['agente_id']}")
+    return OK
+
+
 def cmd_conectar(args):
-    from .conector import ClienteHub, Conector, CredencialesInvalidas
+    from .conector import ClienteHub, Conector, ConexionRechazada, CredencialesInvalidas
 
     verde, rojo, amarillo, gris, fin = paleta(usar_color(args))
     s = simbolos()
-    datos = _credenciales(args).cargar()
     if not args.clave_publica and not args.sin_firma:
         print(f"{rojo}{s['mal']}{fin} falta --clave-publica: sin verificar la firma el agente "
               f"no ejecuta órdenes del hub")
         print(f"  {gris}--sin-firma existe solo para entornos de prueba{fin}")
         return ERROR_USO
+    if not _credenciales(args).existe():
+        faltan = _faltan_para_pedir(args)
+        if faltan:
+            print(f"{rojo}{s['mal']}{fin} este servidor no está conectado y no tiene con qué "
+                  f"pedirlo: falta {', '.join(faltan)}")
+            return ERROR_USO
+        try:
+            _pedir_conexion(args)
+        except ConexionRechazada as e:
+            print(f"{rojo}{s['mal']}{fin} {e}")
+            return FALLA_VALIDACION
+    datos = _credenciales(args).cargar()
 
     cliente = ClienteHub(datos["hub"], token=datos["token"], ca=args.ca,
                          permitir_http=args.permitir_http)
@@ -415,6 +486,32 @@ def construir_parser():
     en.add_argument("--reemplazar", action="store_true")
     en.set_defaults(func=cmd_enrolar)
 
+    def con_pedido(sp):
+        """Lo que el agente necesita para pedir la conexión. Los defaults salen del
+        entorno, que es como se configura en el compose del agente."""
+        sp.add_argument("--hub", default=os.environ.get("DC_HUB_URL"),
+                        help="URL del hub (DC_HUB_URL)")
+        sp.add_argument("--cliente", default=os.environ.get("DC_CLIENTE"),
+                        help="código del cliente en el hub (DC_CLIENTE)")
+        sp.add_argument("--llave", default=os.environ.get("DC_LLAVE"),
+                        help="llave de enrolamiento del cliente (DC_LLAVE)")
+        sp.add_argument("--ambiente", default=os.environ.get("DC_AMBIENTE"),
+                        help="produccion, homologacion, ... (DC_AMBIENTE)")
+        sp.add_argument("--host", default=os.environ.get("DC_HOST"),
+                        help="nombre con el que se presenta; por defecto el del servidor")
+        sp.add_argument("--intervalo", type=float, default=15.0,
+                        help="segundos entre consultas mientras espera")
+        return sp
+
+    so = con_pedido(sub.add_parser(
+        "solicitar", help="pide conectarse al hub con la llave del cliente y espera"))
+    so.add_argument("--trabajo", default=DIR_TRABAJO)
+    so.add_argument("--ca")
+    so.add_argument("--permitir-http", action="store_true", help=argparse.SUPPRESS)
+    so.add_argument("--no-esperar", action="store_true",
+                    help="manda (o consulta) el pedido y sale sin esperar la respuesta")
+    so.set_defaults(func=cmd_solicitar)
+
     co = sub.add_parser("conectar", help="pide órdenes al hub y las ejecuta")
     co.add_argument("--raiz", required=True,
                     help="directorio que contiene los stacks de los productos")
@@ -431,6 +528,7 @@ def construir_parser():
     co.add_argument("--espera-cancelacion", type=int, default=desp_mod.ESPERA_CANCELACION_S)
     co.add_argument("--una-vez", action="store_true",
                     help="una sola vuelta: latido, una orden si hay, y sale")
+    con_pedido(co)
     co.set_defaults(func=cmd_conectar)
 
     return p

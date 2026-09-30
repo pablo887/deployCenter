@@ -3,14 +3,22 @@
 # Uno por host. Toda la conexión es saliente, por 443, a deploy.accusys.com.ar.
 # No abre ningún puerto.
 #
-# Alta, una sola vez, con el código que emite Accusys:
+# Alta: Soporte de Accusys genera en la web la llave del cliente (Agentes →
+# Llaves de enrolamiento). Se completa el .env de este directorio:
 #
-#   docker compose run --rm agente enrolar \
-#       --hub https://deploy.accusys.com.ar --codigo DC-XXXX-XXXX --host "$(hostname -f)"
+#   DC_HUB_URL=https://deploy.accusys.com.ar
+#   DC_CLIENTE=banco-andino
+#   DC_LLAVE=DCK-XXXX-XXXX-XXXX-XXXX-XXXX
+#   DC_AMBIENTE=produccion
 #
-# Después:
+# y se levanta:
 #
 #   docker compose up -d
+#
+# El agente pide conexión y queda esperando. Aparece en la web, en Agentes →
+# Pedidos de conexión, con su host, cliente, ambiente e IP; cuando Soporte lo
+# acepta, recibe su token y empieza a trabajar. La llave sola no conecta nada.
+# Mientras espera, `docker compose logs -f agente` muestra en qué está.
 #
 # Baja: Accusys revoca el agente desde el hub. El servidor no se toca; el agente
 # ve el token revocado y se detiene.
@@ -22,6 +30,14 @@ services:
     image: registry.accusys.com.ar/deploycenter/agente:0.2.0
     restart: unless-stopped
     environment:
+      # Con esto el agente pide conexión la primera vez; después usa su token.
+      DC_HUB_URL: ${DC_HUB_URL:?falta DC_HUB_URL en el .env}
+      DC_CLIENTE: ${DC_CLIENTE:?falta DC_CLIENTE en el .env}
+      DC_LLAVE: ${DC_LLAVE:?falta DC_LLAVE en el .env}
+      DC_AMBIENTE: ${DC_AMBIENTE:?falta DC_AMBIENTE en el .env}
+      # Opcional: el nombre con que se presenta. Por defecto, el del contenedor;
+      # conviene poner el del servidor.
+      DC_HOST: ${DC_HOST:-}
       # Si la salida del servidor pasa por un proxy, el agente lo toma de acá.
       # HTTPS_PROXY: http://proxy.cliente.local:3128
       NO_PROXY: localhost,127.0.0.1
